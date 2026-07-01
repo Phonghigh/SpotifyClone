@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-expo-app@latest . --template blank-typescript)",
+      "Bash(cd \"D:/project/SpotifyClone\" && mv .claude ../.claude-spotify-tmp && echo \"moved\" && ls -la)"
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+import React from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+
+import { colors, radius, spacing } from '../theme';
+import { usePlayer } from '../PlayerContext';
+import { Artwork } from './Artwork';
+
+type Props = {
+  onPress: () => void;
+};
+
+export function MiniPlayer({ onPress }: Props) {
+  const { currentTrack, isPlaying, togglePlay, playNext, position, duration } = usePlayer();
+
+  if (!currentTrack) return null;
+
+  const progress = duration > 0 ? Math.min(position / duration, 1) : 0;
+
+  return (
+    <View style={styles.wrapper}>
+      <Pressable style={styles.bar} onPress={onPress} android_ripple={{ color: colors.surfaceHighlight }}>
+        <Artwork trackKey={currentTrack.id} size={44} borderRadius={radius.sm} />
+
+        <View style={styles.meta}>
+          <Text numberOfLines={1} style={styles.title}>
+            {currentTrack.title}
+          </Text>
+          <Text numberOfLines={1} style={styles.artist}>
+            {currentTrack.artist}
+          </Text>
+        </View>
+
+        <Pressable hitSlop={8} onPress={togglePlay} style={styles.btn}>
+          <Ionicons name={isPlaying ? 'pause' : 'play'} size={26} color={colors.text} />
+        </Pressable>
+        <Pressable hitSlop={8} onPress={playNext} style={styles.btn}>
+          <Ionicons name="play-skip-forward" size={22} color={colors.text} />
+        </Pressable>
+      </Pressable>
+
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrapper: {
+    marginHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceHighlight,
+    overflow: 'hidden',
+  },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: spacing.sm,
+  },
+  meta: {
+    flex: 1,
+    marginLeft: spacing.md,
+    marginRight: spacing.sm,
+  },
+  title: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  artist: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 1,
+  },
+  btn: {
+    paddingHorizontal: spacing.sm,
+  },
+  progressTrack: {
+    height: 2.5,
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.text,
+    borderRadius: 2,
+  },
+});
