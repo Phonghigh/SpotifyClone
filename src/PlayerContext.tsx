@@ -1,3 +1,4 @@
+console.log('[DIAG 3] PlayerContext loading');
 import React, {
   createContext,
   useCallback,
@@ -13,13 +14,20 @@ import {
   useAudioPlayerStatus,
 } from 'expo-audio';
 
-import type { RepeatMode, Track } from './types';
+import type { QueueSource, RepeatMode, Track } from './types';
 import {
   deleteTrack as deleteTrackFromDisk,
   importSongs,
   loadLibrary,
 } from './library';
+import { getPlaybackState, setPlaybackState } from './settings';
 import { shuffled } from './utils';
+
+/** A playback context: the ordered tracks a queue is built from. */
+export type PlayContext = {
+  ids: string[];
+  source: QueueSource;
+};
 
 type PlayerContextValue = {
   // Library
@@ -36,12 +44,23 @@ type PlayerContextValue = {
   position: number; // seconds
   duration: number; // seconds
 
+  // Queue
+  queue: Track[]; // full queue in play order
+  upNext: Track[]; // tracks after the current one
+  queueSource: QueueSource;
+  addToQueue: (trackId: string) => void;
+  playNextInQueue: (trackId: string) => void;
+  removeFromQueue: (trackId: string) => void;
+  moveInQueue: (from: number, to: number) => void;
+  jumpTo: (trackId: string) => void;
+
   // Modes
   shuffle: boolean;
   repeat: RepeatMode;
 
   // Controls
-  playTrack: (id: string) => void;
+  playTrack: (id: string, context?: PlayContext) => void;
+  playPlaylist: (context: PlayContext, options?: { shuffle?: boolean }) => void;
   togglePlay: () => void;
   playNext: () => void;
   playPrev: () => void;
@@ -58,16 +77,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [queueIds, setQueueIds] = useState<string[]>([]);
+  const [queueSource, setQueueSource] = useState<QueueSource>({ type: 'library' });
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>('off');
   const [isImporting, setIsImporting] = useState(false);
 
-  // Refs mirror state so the finish handler / controls read fresh values
-  // without re-subscribing to the audio status on every render.
+  // Refs mirror state so async handlers read fresh values without
+  // re-subscribing to the audio status on every render.
   const tracksRef = useRef<Track[]>([]);
   const currentIdRef = useRef<string | null>(null);
   const repeatRef = useRef<RepeatMode>('off');
-  const orderRef = useRef<string[]>([]);
+  const queueRef = useRef<string[]>([]);
+  /** The un-shuffled order of the active context (to restore on shuffle-off). */
+  const sourceOrderRef = useRef<string[]>([]);
+  const shuffleRef = useRef(false);
 
   useEffect(() => {
     tracksRef.current = tracks;
@@ -78,6 +102,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     repeatRef.current = repeat;
   }, [repeat]);
+  useEffect(() => {
+    shuffleRef.current = shuffle;
+  }, [shuffle]);
+
+  const setQueue = useCallback((ids: string[]) => {
+    queueRef.current = ids;
+    setQueueIds(ids);
+  }, []);
 
   const reloadLibrary = useCallback(() => {
     try {
@@ -89,7 +121,11 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // One-time setup: configure audio session + load the persisted library.
+  /** True once the initial session restore has run (gates persistence). */
+  const restored = useRef(false);
+
+  // One-time setup: configure audio session, load the persisted library,
+  // and restore the last play session (paused).
   useEffect(() => {
     setAudioModeAsync({
       playsInSilentMode: true,
@@ -98,18 +134,54 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => {});
 
     reloadLibrary();
+
+    try {
+      const saved = getPlaybackState();
+      if (saved) {
+        const existing = new Set(tracksRef.current.map((t) => t.id));
+        const ids = saved.queueIds.filter((id) => existing.has(id));
+        if (ids.length > 0) {
+          queueRef.current = ids;
+          setQueueIds(ids);
+          sourceOrderRef.current = [...ids];
+          setQueueSource(saved.source);
+          shuffleRef.current = saved.shuffle;
+          setShuffle(saved.shuffle);
+          repeatRef.current = saved.repeat;
+          setRepeat(saved.repeat);
+
+          const cur =
+            saved.currentId && existing.has(saved.currentId)
+              ? tracksRef.current.find((t) => t.id === saved.currentId)!
+              : null;
+          if (cur) {
+            currentIdRef.current = cur.id;
+            setCurrentId(cur.id);
+            try {
+              player.replace({ uri: cur.uri }); // load, but stay paused
+            } catch {}
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to restore session', err);
+    } finally {
+      restored.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadLibrary]);
 
-  /** Compute the play order; with shuffle the chosen track stays first. */
-  const buildOrder = useCallback(
-    (startId: string | null, list: Track[], doShuffle: boolean): string[] => {
-      const ids = list.map((t) => t.id);
-      if (!doShuffle) return ids;
-      if (startId == null) return shuffled(ids);
-      return [startId, ...shuffled(ids.filter((id) => id !== startId))];
-    },
-    [],
-  );
+  // Persist the play session whenever it changes (after restore).
+  useEffect(() => {
+    if (!restored.current) return;
+    setPlaybackState({
+      queueIds,
+      currentId,
+      source: queueSource,
+      shuffle,
+      repeat,
+    });
+  }, [queueIds, currentId, queueSource, shuffle, repeat]);
 
   const loadAndPlay = useCallback(
     (track: Track) => {
@@ -134,15 +206,52 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     [player],
   );
 
+  /** Build a queue from a context order, honoring shuffle with `first` first. */
+  const buildQueue = useCallback(
+    (contextIds: string[], first: string | null, doShuffle: boolean): string[] => {
+      if (!doShuffle) return [...contextIds];
+      if (first == null) return shuffled(contextIds);
+      return [first, ...shuffled(contextIds.filter((id) => id !== first))];
+    },
+    [],
+  );
+
   const playTrack = useCallback(
-    (id: string) => {
+    (id: string, context?: PlayContext) => {
       const list = tracksRef.current;
       const track = list.find((t) => t.id === id);
       if (!track) return;
-      orderRef.current = buildOrder(id, list, shuffle);
+
+      const ctxIds = context?.ids ?? list.map((t) => t.id);
+      sourceOrderRef.current = [...ctxIds];
+      setQueue(buildQueue(ctxIds, id, shuffleRef.current));
+      setQueueSource(context?.source ?? { type: 'library' });
       loadAndPlay(track);
     },
-    [buildOrder, loadAndPlay, shuffle],
+    [buildQueue, loadAndPlay, setQueue],
+  );
+
+  const playPlaylist = useCallback(
+    (context: PlayContext, options?: { shuffle?: boolean }) => {
+      const list = tracksRef.current;
+      const playable = context.ids.filter((id) => list.some((t) => t.id === id));
+      if (playable.length === 0) return;
+
+      const wantShuffle = options?.shuffle ?? shuffleRef.current;
+      if (options?.shuffle != null) {
+        shuffleRef.current = options.shuffle;
+        setShuffle(options.shuffle);
+      }
+
+      const order = wantShuffle ? shuffled(playable) : playable;
+      sourceOrderRef.current = [...playable];
+      setQueue(order);
+      setQueueSource(context.source);
+
+      const first = list.find((t) => t.id === order[0]);
+      if (first) loadAndPlay(first);
+    },
+    [loadAndPlay, setQueue],
   );
 
   const togglePlay = useCallback(() => {
@@ -158,7 +267,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   /** Advance to the next track. `fromFinish` honours repeat-one. */
   const advance = useCallback(
     (fromFinish: boolean) => {
-      const order = orderRef.current;
+      const order = queueRef.current;
       const curId = currentIdRef.current;
       const list = tracksRef.current;
       if (order.length === 0 || !curId) return;
@@ -196,7 +305,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       player.seekTo(0).catch(() => {});
       return;
     }
-    const order = orderRef.current;
+    const order = queueRef.current;
     const curId = currentIdRef.current;
     const list = tracksRef.current;
     if (!curId || order.length === 0) return;
@@ -224,20 +333,96 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const toggleShuffle = useCallback(() => {
     setShuffle((prev) => {
       const next = !prev;
-      orderRef.current = buildOrder(
-        currentIdRef.current,
-        tracksRef.current,
-        next,
-      );
+      shuffleRef.current = next;
+      const cur = currentIdRef.current;
+      if (next) {
+        // Shuffle everything after keeping the current track first.
+        const others = queueRef.current.filter((id) => id !== cur);
+        setQueue(cur ? [cur, ...shuffled(others)] : shuffled(others));
+      } else {
+        // Restore the context's original order.
+        const source = sourceOrderRef.current;
+        // Keep any manual queue additions that aren't in the source order.
+        const extras = queueRef.current.filter((id) => !source.includes(id));
+        setQueue([...source, ...extras]);
+      }
       return next;
     });
-  }, [buildOrder]);
+  }, [setQueue]);
 
   const cycleRepeat = useCallback(() => {
     setRepeat((prev) =>
       prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off',
     );
   }, []);
+
+  // ------------------------------------------------------------------
+  // Queue editing
+  // ------------------------------------------------------------------
+
+  const addToQueue = useCallback(
+    (trackId: string) => {
+      if (!tracksRef.current.some((t) => t.id === trackId)) return;
+      const q = queueRef.current;
+      if (q.length === 0) {
+        // Nothing playing: start a queue with just this track.
+        sourceOrderRef.current = [trackId];
+        setQueue([trackId]);
+        return;
+      }
+      if (q.includes(trackId)) {
+        // Move an existing entry to the end (after current) instead of duping.
+        setQueue([...q.filter((id) => id !== trackId), trackId]);
+        return;
+      }
+      setQueue([...q, trackId]);
+    },
+    [setQueue],
+  );
+
+  const playNextInQueue = useCallback(
+    (trackId: string) => {
+      if (!tracksRef.current.some((t) => t.id === trackId)) return;
+      const q = queueRef.current.filter((id) => id !== trackId);
+      const cur = currentIdRef.current;
+      const idx = cur ? q.indexOf(cur) : -1;
+      const next = [...q];
+      next.splice(idx + 1, 0, trackId);
+      setQueue(next);
+    },
+    [setQueue],
+  );
+
+  const removeFromQueue = useCallback(
+    (trackId: string) => {
+      if (trackId === currentIdRef.current) return; // never remove the playing track
+      setQueue(queueRef.current.filter((id) => id !== trackId));
+    },
+    [setQueue],
+  );
+
+  const moveInQueue = useCallback(
+    (from: number, to: number) => {
+      const q = [...queueRef.current];
+      if (from < 0 || from >= q.length || to < 0 || to >= q.length) return;
+      const [moved] = q.splice(from, 1);
+      q.splice(to, 0, moved);
+      setQueue(q);
+    },
+    [setQueue],
+  );
+
+  const jumpTo = useCallback(
+    (trackId: string) => {
+      const track = tracksRef.current.find((t) => t.id === trackId);
+      if (track && queueRef.current.includes(trackId)) loadAndPlay(track);
+    },
+    [loadAndPlay],
+  );
+
+  // ------------------------------------------------------------------
+  // Library management
+  // ------------------------------------------------------------------
 
   const addSongs = useCallback(async () => {
     setIsImporting(true);
@@ -268,7 +453,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       const next = tracksRef.current.filter((t) => t.id !== id);
       tracksRef.current = next;
       setTracks(next);
-      orderRef.current = orderRef.current.filter((x) => x !== id);
+      setQueue(queueRef.current.filter((x) => x !== id));
+      sourceOrderRef.current = sourceOrderRef.current.filter((x) => x !== id);
 
       if (currentIdRef.current === id) {
         try {
@@ -278,7 +464,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         currentIdRef.current = null;
       }
     },
-    [player],
+    [player, setQueue],
   );
 
   // Auto-advance when a track finishes.
@@ -290,6 +476,17 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     () => tracks.find((t) => t.id === currentId) ?? null,
     [tracks, currentId],
   );
+
+  const queue = useMemo(() => {
+    const byId = new Map(tracks.map((t) => [t.id, t]));
+    return queueIds.map((id) => byId.get(id)).filter((t): t is Track => t != null);
+  }, [tracks, queueIds]);
+
+  const upNext = useMemo(() => {
+    if (!currentId) return queue;
+    const idx = queue.findIndex((t) => t.id === currentId);
+    return idx >= 0 ? queue.slice(idx + 1) : queue;
+  }, [queue, currentId]);
 
   const rawDuration = status?.duration ?? 0;
   const value = useMemo<PlayerContextValue>(
@@ -304,9 +501,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       isBuffering: status?.isBuffering ?? false,
       position: status?.currentTime ?? 0,
       duration: isFinite(rawDuration) ? rawDuration : 0,
+      queue,
+      upNext,
+      queueSource,
+      addToQueue,
+      playNextInQueue,
+      removeFromQueue,
+      moveInQueue,
+      jumpTo,
       shuffle,
       repeat,
       playTrack,
+      playPlaylist,
       togglePlay,
       playNext,
       playPrev,
@@ -325,9 +531,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       status?.isBuffering,
       status?.currentTime,
       rawDuration,
+      queue,
+      upNext,
+      queueSource,
+      addToQueue,
+      playNextInQueue,
+      removeFromQueue,
+      moveInQueue,
+      jumpTo,
       shuffle,
       repeat,
       playTrack,
+      playPlaylist,
       togglePlay,
       playNext,
       playPrev,

@@ -24,31 +24,61 @@ YouTube/Spotify link. Tap a song to play. 🎵
 ## 🎵 Download from a YouTube / Spotify link
 
 A phone app can't run YouTube extractors itself, so downloading is handled by a
-tiny **companion server** that runs on your computer (in [`server/`](server/)).
-It uses `yt-dlp` + `ffmpeg` (both fetched automatically on install).
+tiny **companion server** (in [`server/`](server/)) using `yt-dlp` + `ffmpeg`
+(both fetched automatically on install). It can run on your own computer for
+local dev, or be hosted (e.g. on [Render](https://render.com)) so the app works
+without your computer running.
 
 > **Spotify note:** Spotify audio is DRM-protected and is *not* downloaded
 > directly. For a Spotify link the server reads only the public track
 > **metadata** (title + artist) and then finds and downloads the matching song
 > from YouTube — the same approach the open-source `spotdl` tool uses.
 
-### Start the server
+### Start the server locally
 
 ```bash
 cd server
 npm install      # first time — also downloads yt-dlp + ffmpeg
-npm start        # serves on http://0.0.0.0:4000
+API_KEY=<any-random-string> npm start   # serves on http://0.0.0.0:4000
 ```
+
+### Deploy the server on Render
+
+The repo root has a ready-to-use `render.yaml` blueprint:
+
+1. Push this repo to GitHub, then in the [Render dashboard](https://dashboard.render.com):
+   **New +** → **Blueprint** → connect the repo. Render auto-detects
+   `render.yaml` (`rootDir: server`, health check on `/health`).
+2. When prompted for the `API_KEY` environment variable, paste a freshly
+   generated random value — e.g. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+   This is **never** committed to git; Render stores it as a secret.
+3. Once deployed, confirm `https://<your-service>.onrender.com/health` returns
+   `{ "ok": true, "ytdlp": true }`.
+
+> **Free-tier notes:** the instance spins down after ~15 min idle (first
+> request after that can take 30-60s to wake up), and the in-memory job list /
+> downloaded files are wiped on every restart — fine for personal use, just
+> not persistent storage.
+
+### Configure the app to use your server
+
+The app needs a matching server URL and API key. These live in
+[`src/config.ts`](src/config.ts), which reads the real values from
+`src/config.local.ts` — a **gitignored** file that's never committed.
+
+1. Copy the template: `cp src/config.local.example.ts src/config.local.ts`
+   (Windows: `copy src\config.local.example.ts src\config.local.ts`)
+2. Edit `src/config.local.ts` and set `API_KEY` to the **same value** you set
+   as the `API_KEY` env var on your server (Render or local).
+3. Update `DEFAULT_SERVER_URL` in `src/config.ts` to your deployed Render URL
+   (or override it at runtime under **Server settings** in the "Add from
+   link" sheet — handy for pointing at a local server during dev).
 
 ### Use it from the app
 
 1. Tap the **🔗 link** button (top-right) or "Paste a link instead".
 2. Paste a YouTube or Spotify **song** link and tap **Download**.
 3. Watch the progress; when done the song is saved into your library.
-
-The app is pre-configured to reach the server at the LAN address detected during
-setup. If your computer's IP changes, update it under **Server settings** in the
-"Add from link" sheet (or in [`src/config.ts`](src/config.ts)).
 
 > ⚠️ Only download content you own or have the right to use. Respect YouTube's
 > and Spotify's Terms of Service and local copyright law.
@@ -78,16 +108,36 @@ codec — so you can see exactly what you got.
 
 ## Features
 
-- ▶️ Play / pause, next / previous, seek
-- 🔀 Shuffle and 🔁 repeat (off / all / one), auto-advance on track end
-- 📱 Mini-player + full-screen player
-- 🔗 Download from YouTube / Spotify links (via companion server)
-- 💾 Library persists across restarts
+- ▶️ Play / pause, next / previous, seek; auto-advance on track end
+- 🔀 Shuffle and 🔁 repeat (off / all / one)
+- 🗂️ **Playlists** — create, reorder, add/remove; play or shuffle a whole playlist
+- ⏭️ **Up Next queue** — play next, add to queue, reorder, jump
+- 📥 **Download queue** — add many links; they process one by one with progress,
+  a toast + **local notification** when each finishes, and retry on failure
+- 📋 **Clipboard auto-detect** — copy a YouTube/Spotify link anywhere, open the
+  app, and a banner offers to download it (no paste needed)
+- 📤 **Share-sheet target** (dev build) — share a link straight from the
+  YouTube/Spotify app to Spotaclone via `expo-share-intent`
+- 🔗 Deep link: `spotaclone://add?url=…` queues a download
+- 🎤 **Synced lyrics** (LRCLIB) — karaoke-style highlight, tap a line to seek
+- 📈 **Sound map** — server-computed waveform you can drag to seek, plus an
+  experimental **melodic contour** (pitch line)
+- 🧊 **Liquid Glass UI** — frosted-glass sheets, mini-player, tabs, banners
+- 📱 Mini-player + full-screen player with swipeable Artwork / Lyrics / Sound-map pages
+- 💾 Library, playlists, queue, and session persist across restarts
 
 ## Notes / limitations
 
-- **Expo Go** runs the full UI + foreground playback. **Background playback and
-  lock-screen controls** need a *development build* (`npx expo run:android`).
+- **Expo Go** runs the full UI + foreground playback. **Background playback,
+  lock-screen controls, the share-sheet target, and full blur fidelity** need a
+  *development build* (`npx expo run:android`).
+- The download queue processes while the app's JS is running (foreground, or
+  background while music plays). It resumes queued items on next launch.
+- Lyrics come from [LRCLIB](https://lrclib.net) (free) — coverage varies; files
+  named `Artist - Title` match best. The pitch contour is experimental and is
+  clearest on melody-forward tracks.
+- Analysis (waveform/pitch) happens automatically for link downloads; for
+  file-picker imports use **Analyze on server** on the Sound-map page.
 - Album art embedded in files isn't read; the app shows generated gradient art.
 - Spotify support covers single **track** links (not playlists/albums).
 
@@ -100,7 +150,7 @@ src/
   LibraryScreen.tsx         Main screen: header, list, empty state, modal hosts
   library.ts                Import / persist / list / delete songs + remote import
   settings.ts               Persisted settings (downloader server URL)
-  config.ts                 Default server URL
+  config.ts                 Default server URL + API key (see config.local.ts)
   theme.ts / types.ts / utils.ts
   components/
     Artwork, TrackRow, EqualizerBars, MiniPlayer, FullPlayer, AddFromLink

@@ -49,6 +49,19 @@ export function trackFromFile(fileName: string, uri: string): Track {
   return { id: fileName, uri, title, artist, fileName };
 }
 
+/**
+ * Strip video-title decorations ("(Official Video)", "[MV]", "| Lyrics"…)
+ * so filename-derived titles match lyrics-database entries better.
+ */
+export function cleanTitleForSearch(title: string): string {
+  return title
+    .replace(/[\(\[][^)\]]*(official|video|audio|lyric|lyrics|visualizer|m\/?v|hd|4k|remaster[^)\]]*)[^)\]]*[\)\]]/gi, '')
+    .replace(/\|.*$/g, '')
+    .replace(/\b(official\s*(music)?\s*video|official\s*audio|lyrics?\s*video|full\s*album)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 /** Human-readable file size, e.g. "7.8 MB". */
 export function formatBytes(bytes?: number | null): string {
   if (!bytes || bytes <= 0) return '';

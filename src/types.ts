@@ -12,3 +12,8 @@ export type Track = {
 };
 
 export type RepeatMode = 'off' | 'all' | 'one';
+
+/** Where the current playback queue came from. */
+export type QueueSource =
+  | { type: 'library' }
+  | { type: 'playlist'; id: string; name: string };

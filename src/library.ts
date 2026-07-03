@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 
+import { authHeaders } from './downloaderClient';
 import type { Track } from './types';
 import { isAudioFileName, trackFromFile } from './utils';
 
@@ -121,7 +122,7 @@ export async function importRemoteTrack(params: {
   const ext = (params.ext || 'mp3').replace(/[^a-z0-9]/gi, '') || 'mp3';
   const base = artist ? `${artist} - ${params.title}` : params.title;
   const dest = uniqueDestination(dir, `${base}.${ext}`);
-  await File.downloadFileAsync(params.fileUrl, dest);
+  await File.downloadFileAsync(params.fileUrl, dest, { headers: authHeaders() });
   return trackFromFile(dest.name, dest.uri);
 }
 

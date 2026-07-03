@@ -1,6 +1,9 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   DOWNLOADS_DIR,
@@ -12,12 +15,45 @@ import {
   probeAudio,
   ytdlpAvailable,
 } from './downloader.js';
+import { analyzeFile } from './analyze.js';
 
 const PORT = process.env.PORT || 4000;
+const API_KEY = process.env.API_KEY;
 const ALLOWED_FORMATS = Object.keys(FORMATS);
 
 const app = express();
+// Render sits behind a reverse proxy; trust its X-Forwarded-For so
+// express-rate-limit keys on the real client IP instead of the proxy's.
+app.set('trust proxy', 1);
 app.use(express.json());
+
+/** Constant-time string compare (avoids leaking key length/prefix via timing). */
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Require a matching API key on every route except the health check, so a
+// publicly-hosted instance can't be used by anyone but this app.
+app.use((req, res, next) => {
+  if (req.path === '/health') return next();
+  const key = req.get('x-api-key');
+  if (!API_KEY || !key || !safeEqual(key, API_KEY)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+});
+
+// Downloads/analysis are expensive (spawn yt-dlp/ffmpeg, use bandwidth) — cap
+// how often one client can kick them off so a leaked key can't run up costs.
+const downloadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // In-memory job store. Jobs are ephemeral; files live in DOWNLOADS_DIR.
 /** @type {Map<string, any>} */
@@ -32,7 +68,7 @@ app.get('/health', (_req, res) => {
   });
 });
 
-app.post('/api/download', (req, res) => {
+app.post('/api/download', downloadLimiter, (req, res) => {
   const url = req.body?.url;
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'Provide a "url" in the request body.' });
@@ -54,6 +90,7 @@ app.post('/api/download', (req, res) => {
     artist: null,
     ext: null,
     quality: null,
+    analysis: null,
     error: null,
     file: null,
     createdAt: Date.now(),
@@ -114,6 +151,13 @@ async function processJob(job) {
     : null;
   job.quality.durationSec = probe.durationSec || null;
 
+  // Waveform + pitch analysis for the app's contour view (best effort).
+  try {
+    job.analysis = await analyzeFile(file);
+  } catch (err) {
+    console.warn(`[job ${job.id}] analysis failed:`, err.message);
+  }
+
   job.progress = 100;
   job.status = 'done';
   console.log(
@@ -121,6 +165,31 @@ async function processJob(job) {
       `[${label}, ~${job.quality.outputBitrateKbps ?? '?'} kbps, ${(size / 1e6).toFixed(1)} MB]`,
   );
 }
+
+/**
+ * Analyze an audio file the phone already has (imported from local storage).
+ * Body: raw audio bytes. Response: { peaks, pitch, durationSec }.
+ */
+app.post(
+  '/api/analyze',
+  downloadLimiter,
+  express.raw({ type: () => true, limit: '200mb' }),
+  async (req, res) => {
+    if (!req.body || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: 'Send the raw audio file as the request body.' });
+    }
+    const tmp = path.join(os.tmpdir(), `spotaclone-analyze-${crypto.randomUUID()}`);
+    try {
+      fs.writeFileSync(tmp, req.body);
+      const analysis = await analyzeFile(tmp);
+      res.json(analysis);
+    } catch (err) {
+      res.status(422).json({ error: `Analysis failed: ${err.message}` });
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
+  },
+);
 
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);

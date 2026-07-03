@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from 'react';
+console.log('[DIAG 7] FullPlayer loading');
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
   Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -12,16 +16,22 @@ import Slider from '@react-native-community/slider';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 
 import { colors, gradientFor, spacing } from '../theme';
+import { glass } from '../liquid-theme';
 import { usePlayer } from '../PlayerContext';
 import { formatTime } from '../utils';
+import { UpNextSheet } from './UpNextSheet';
+import { LiquidGlass } from './LiquidGlass';
+import { LyricsView } from './LyricsView';
+import { ContourView } from './ContourView';
 
 type Props = {
   visible: boolean;
   onClose: () => void;
 };
 
-const { width, height } = Dimensions.get('window');
-const ART_SIZE = Math.min(width - 64, height * 0.42);
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const ART_SIZE = Math.min(SCREEN_W - 96, SCREEN_H * 0.36);
+const PAGES = ['art', 'lyrics', 'contour'] as const;
 
 export function FullPlayer({ visible, onClose }: Props) {
   const {
@@ -37,11 +47,15 @@ export function FullPlayer({ visible, onClose }: Props) {
     seekTo,
     toggleShuffle,
     cycleRepeat,
+    queueSource,
   } = usePlayer();
 
   // Local seek state so the thumb doesn't snap back while dragging.
   const [seeking, setSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const pagerRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     setSeeking(false);
@@ -55,6 +69,11 @@ export function FullPlayer({ visible, onClose }: Props) {
 
   const repeatActive = repeat !== 'off';
   const repeatIcon = repeat === 'one' ? 'repeat-one' : 'repeat';
+
+  const onPagerScrollEnd = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const next = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
+    if (next !== page && next >= 0 && next < PAGES.length) setPage(next);
+  };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
@@ -71,22 +90,74 @@ export function FullPlayer({ visible, onClose }: Props) {
             <Pressable hitSlop={12} onPress={onClose} style={styles.headerBtn}>
               <Ionicons name="chevron-down" size={28} color={colors.text} />
             </Pressable>
-            <Text style={styles.headerLabel}>PLAYING FROM YOUR LIBRARY</Text>
-            <View style={styles.headerBtn} />
+            <Text numberOfLines={1} style={styles.headerLabel}>
+              {queueSource.type === 'playlist'
+                ? `PLAYLIST · ${queueSource.name.toUpperCase()}`
+                : 'PLAYING FROM YOUR LIBRARY'}
+            </Text>
+            <Pressable hitSlop={12} onPress={() => setQueueOpen(true)} style={styles.headerBtn}>
+              <Ionicons name="list" size={24} color={colors.text} />
+            </Pressable>
           </View>
 
-          {/* Artwork */}
-          <View style={styles.artWrap}>
-            <LinearGradient
-              colors={gradientFor(currentTrack.id)}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.art}
-            >
-              <Ionicons name="musical-notes" size={ART_SIZE * 0.32} color="rgba(255,255,255,0.92)" />
-            </LinearGradient>
+          {/* Pager: Artwork | Lyrics | Sound map */}
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={onPagerScrollEnd}
+            style={styles.pager}
+            contentContainerStyle={{ width: SCREEN_W * PAGES.length }}
+          >
+            {/* Page 1 — artwork */}
+            <View style={styles.page}>
+              <View style={styles.artWrap}>
+                <LinearGradient
+                  colors={gradientFor(currentTrack.id)}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.art}
+                >
+                  <Ionicons
+                    name="musical-notes"
+                    size={ART_SIZE * 0.32}
+                    color="rgba(255,255,255,0.92)"
+                  />
+                </LinearGradient>
+              </View>
+            </View>
+
+            {/* Page 2 — lyrics */}
+            <View style={styles.page}>
+              <LyricsView
+                track={currentTrack}
+                position={position}
+                duration={duration}
+                onSeek={seekTo}
+              />
+            </View>
+
+            {/* Page 3 — waveform + melodic contour */}
+            <View style={styles.page}>
+              <ContourView
+                track={currentTrack}
+                position={position}
+                duration={duration}
+                onSeek={seekTo}
+              />
+            </View>
+          </ScrollView>
+
+          {/* Page dots */}
+          <View style={styles.dots}>
+            {PAGES.map((key, i) => (
+              <View key={key} style={[styles.dot, i === page && styles.dotActive]} />
+            ))}
           </View>
 
+          {/* Bottom control sheet — Liquid Glass over the gradient backdrop */}
+          <LiquidGlass radius={glass.radius.lg} style={styles.controlsSheet} intensity={35}>
           {/* Title + artist */}
           <View style={styles.infoRow}>
             <View style={styles.infoText}>
@@ -160,7 +231,10 @@ export function FullPlayer({ visible, onClose }: Props) {
               />
             </Pressable>
           </View>
+          </LiquidGlass>
         </View>
+
+        <UpNextSheet visible={queueOpen} onClose={() => setQueueOpen(false)} />
       </View>
     </Modal>
   );
@@ -174,13 +248,13 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingTop: spacing.xxl + spacing.lg,
-    paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xxl,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
   },
   headerBtn: {
     width: 32,
@@ -191,9 +265,20 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1,
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: spacing.sm,
+  },
+  pager: {
+    flex: 1,
+    marginTop: spacing.md,
+  },
+  page: {
+    width: SCREEN_W,
+    paddingHorizontal: spacing.xl,
+    justifyContent: 'center',
   },
   artWrap: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -209,10 +294,32 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 12 },
     elevation: 12,
   },
+  dots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  dotActive: {
+    backgroundColor: colors.text,
+  },
+  controlsSheet: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    paddingBottom: spacing.lg,
+    backgroundColor: 'rgba(18,18,18,0.35)',
+  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
   },
   infoText: {
     flex: 1,
@@ -220,16 +327,17 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
   },
   artist: {
     color: colors.textSecondary,
-    fontSize: 16,
-    marginTop: 4,
+    fontSize: 15,
+    marginTop: 3,
   },
   seekWrap: {
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.xl,
   },
   slider: {
     width: '100%',
@@ -249,12 +357,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.xl,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
   },
   playBtn: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: colors.text,
     alignItems: 'center',
     justifyContent: 'center',

@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: spotaclone-downloader
+    runtime: node
+    rootDir: server
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        sync: false
+      - key: NODE_VERSION
+        value: 20

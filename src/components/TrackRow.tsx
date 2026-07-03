@@ -1,8 +1,9 @@
 import React from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing } from '../theme';
+import { glass } from '../liquid-theme';
 import type { Track } from '../types';
 import { Artwork } from './Artwork';
 import { EqualizerBars } from './EqualizerBars';
@@ -12,22 +13,19 @@ type Props = {
   isCurrent: boolean;
   isPlaying: boolean;
   onPress: () => void;
-  onRemove: () => void;
+  onMore: () => void;
 };
 
-function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onRemove }: Props) {
-  const confirmRemove = () => {
-    Alert.alert('Remove song', `Remove “${track.title}” from your library?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: onRemove },
-    ]);
-  };
-
+function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onMore }: Props) {
   return (
     <Pressable
       onPress={onPress}
       android_ripple={{ color: colors.surfaceHighlight }}
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [
+        styles.row,
+        isCurrent && styles.rowCurrent,
+        pressed && styles.rowPressed,
+      ]}
     >
       <Artwork trackKey={track.id} size={52} />
 
@@ -49,11 +47,7 @@ function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onRemove }: P
         </View>
       ) : null}
 
-      <Pressable
-        hitSlop={10}
-        onPress={confirmRemove}
-        style={styles.moreBtn}
-      >
+      <Pressable hitSlop={10} onPress={onMore} style={styles.moreBtn}>
         <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
       </Pressable>
     </Pressable>
@@ -68,6 +62,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
+  },
+  rowCurrent: {
+    // Liquid Glass tint only — no BlurView in list rows (performance).
+    backgroundColor: glass.light,
   },
   rowPressed: {
     backgroundColor: colors.surface,

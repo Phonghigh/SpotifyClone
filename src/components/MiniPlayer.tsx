@@ -3,8 +3,10 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 import { colors, radius, spacing } from '../theme';
+import { glass } from '../liquid-theme';
 import { usePlayer } from '../PlayerContext';
 import { Artwork } from './Artwork';
+import { LiquidGlass } from './LiquidGlass';
 
 type Props = {
   onPress: () => void;
@@ -18,8 +20,8 @@ export function MiniPlayer({ onPress }: Props) {
   const progress = duration > 0 ? Math.min(position / duration, 1) : 0;
 
   return (
-    <View style={styles.wrapper}>
-      <Pressable style={styles.bar} onPress={onPress} android_ripple={{ color: colors.surfaceHighlight }}>
+    <LiquidGlass radius={glass.radius.sm} style={styles.wrapper} intensity={70}>
+      <Pressable style={styles.bar} onPress={onPress}>
         <Artwork trackKey={currentTrack.id} size={44} borderRadius={radius.sm} />
 
         <View style={styles.meta}>
@@ -42,16 +44,14 @@ export function MiniPlayer({ onPress }: Props) {
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
       </View>
-    </View>
+    </LiquidGlass>
   );
 }
 
 const styles = StyleSheet.create({
   wrapper: {
     marginHorizontal: spacing.sm,
-    borderRadius: radius.md,
-    backgroundColor: colors.surfaceHighlight,
-    overflow: 'hidden',
+    backgroundColor: 'rgba(24,24,24,0.5)',
   },
   bar: {
     flexDirection: 'row',

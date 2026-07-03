@@ -1,3 +1,4 @@
+console.log('[DIAG 6] LibraryScreen loading');
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,13 +15,28 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { colors, spacing } from './theme';
 import { usePlayer } from './PlayerContext';
+import { usePlaylists } from './PlaylistsContext';
+import { useDownloadQueue } from './DownloadQueueContext';
 import type { Track } from './types';
 import { TrackRow } from './components/TrackRow';
 import { MiniPlayer } from './components/MiniPlayer';
 import { FullPlayer } from './components/FullPlayer';
 import { AddFromLink } from './components/AddFromLink';
+import { DownloadsSheet } from './components/DownloadsSheet';
+import { ClipboardBanner } from './components/ClipboardBanner';
+import { SegmentedTabs } from './components/SegmentedTabs';
+import { PlaylistsView } from './components/PlaylistsView';
+import { PlaylistDetail } from './components/PlaylistDetail';
+import { TrackActionsSheet } from './components/TrackActionsSheet';
+import { AddToPlaylistSheet } from './components/AddToPlaylistSheet';
+import { useClipboardLinkDetect } from './hooks/useClipboardLinkDetect';
+import { useDeepLinkIntake } from './hooks/useDeepLinkIntake';
+import { ShareIntentIntake, shareIntentAvailable } from './hooks/ShareIntentIntake';
+import { setLastOfferedClipboardUrl } from './settings';
 
 const TOP_INSET = Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 56;
+
+type Tab = 'songs' | 'playlists';
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -36,12 +52,32 @@ export function LibraryScreen() {
     isPlaying,
     isImporting,
     playTrack,
-    removeTrack,
     addSongs,
   } = usePlayer();
+  const { playlists, removeTrack: removeFromPlaylist } = usePlaylists();
+  const { activeCount, enqueue } = useDownloadQueue();
 
+  const [tab, setTab] = useState<Tab>('songs');
+  const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
   const [playerOpen, setPlayerOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [downloadsOpen, setDownloadsOpen] = useState(false);
+  const [actionsTrack, setActionsTrack] = useState<Track | null>(null);
+  const [actionsFromPlaylist, setActionsFromPlaylist] = useState<string | null>(null);
+  const [playlistPickTrack, setPlaylistPickTrack] = useState<Track | null>(null);
+
+  // Link intake: clipboard banner (confirm), deep link + share sheet (direct).
+  const { offer: clipboardOffer, dismiss: dismissClipboard } = useClipboardLinkDetect();
+  useDeepLinkIntake(enqueue);
+
+  const acceptClipboard = useCallback(() => {
+    if (clipboardOffer) {
+      setLastOfferedClipboardUrl(clipboardOffer);
+      enqueue(clipboardOffer);
+      setDownloadsOpen(true);
+    }
+    dismissClipboard();
+  }, [clipboardOffer, enqueue, dismissClipboard]);
 
   const handleAdd = useCallback(async () => {
     const { added, skipped } = await addSongs();
@@ -50,6 +86,11 @@ export function LibraryScreen() {
     }
   }, [addSongs]);
 
+  const openTrackActions = useCallback((track: Track, fromPlaylistId?: string) => {
+    setActionsFromPlaylist(fromPlaylistId ?? null);
+    setActionsTrack(track);
+  }, []);
+
   const renderItem = useCallback(
     ({ item }: { item: Track }) => (
       <TrackRow
@@ -57,11 +98,14 @@ export function LibraryScreen() {
         isCurrent={item.id === currentTrack?.id}
         isPlaying={isPlaying && item.id === currentTrack?.id}
         onPress={() => playTrack(item.id)}
-        onRemove={() => removeTrack(item.id)}
+        onMore={() => openTrackActions(item)}
       />
     ),
-    [currentTrack?.id, isPlaying, playTrack, removeTrack],
+    [currentTrack?.id, isPlaying, playTrack, openTrackActions],
   );
+
+  const openPlaylist = playlists.find((p) => p.id === openPlaylistId);
+  const actionsPlaylist = playlists.find((p) => p.id === actionsFromPlaylist);
 
   return (
     <View style={styles.root}>
@@ -78,6 +122,19 @@ export function LibraryScreen() {
         </View>
 
         <View style={styles.headerActions}>
+          <Pressable
+            onPress={() => setDownloadsOpen(true)}
+            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
+            hitSlop={8}
+          >
+            <Ionicons name="cloud-download-outline" size={20} color={colors.text} />
+            {activeCount > 0 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{activeCount}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+
           <Pressable
             onPress={() => setLinkOpen(true)}
             style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
@@ -104,21 +161,42 @@ export function LibraryScreen() {
         </View>
       </View>
 
-      {/* Library list / empty state */}
-      {tracks.length === 0 ? (
-        <EmptyState onAdd={handleAdd} onLink={() => setLinkOpen(true)} busy={isImporting} />
-      ) : (
-        <FlatList
-          data={tracks}
-          keyExtractor={(t) => t.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          ListHeaderComponent={
-            <Text style={styles.count}>
-              {tracks.length} song{tracks.length === 1 ? '' : 's'}
-            </Text>
-          }
+      {/* Body: playlist drill-down or tabbed views */}
+      {openPlaylist ? (
+        <PlaylistDetail
+          playlistId={openPlaylist.id}
+          onBack={() => setOpenPlaylistId(null)}
+          onTrackMore={(track) => openTrackActions(track, openPlaylist.id)}
         />
+      ) : (
+        <>
+          <SegmentedTabs<Tab>
+            options={[
+              { key: 'songs', label: 'Songs' },
+              { key: 'playlists', label: 'Playlists' },
+            ]}
+            value={tab}
+            onChange={setTab}
+          />
+
+          {tab === 'playlists' ? (
+            <PlaylistsView onOpenPlaylist={setOpenPlaylistId} />
+          ) : tracks.length === 0 ? (
+            <EmptyState onAdd={handleAdd} onLink={() => setLinkOpen(true)} busy={isImporting} />
+          ) : (
+            <FlatList
+              data={tracks}
+              keyExtractor={(t) => t.id}
+              renderItem={renderItem}
+              contentContainerStyle={styles.listContent}
+              ListHeaderComponent={
+                <Text style={styles.count}>
+                  {tracks.length} song{tracks.length === 1 ? '' : 's'}
+                </Text>
+              }
+            />
+          )}
+        </>
       )}
 
       {/* Mini player */}
@@ -130,6 +208,34 @@ export function LibraryScreen() {
 
       <FullPlayer visible={playerOpen} onClose={() => setPlayerOpen(false)} />
       <AddFromLink visible={linkOpen} onClose={() => setLinkOpen(false)} />
+      <DownloadsSheet visible={downloadsOpen} onClose={() => setDownloadsOpen(false)} />
+      <TrackActionsSheet
+        track={actionsTrack}
+        onClose={() => setActionsTrack(null)}
+        onAddToPlaylist={(track) => setPlaylistPickTrack(track)}
+        playlistContext={
+          actionsPlaylist
+            ? {
+                id: actionsPlaylist.id,
+                name: actionsPlaylist.name,
+                removeTrack: (trackId) => removeFromPlaylist(actionsPlaylist.id, trackId),
+              }
+            : undefined
+        }
+      />
+      <AddToPlaylistSheet
+        track={playlistPickTrack}
+        onClose={() => setPlaylistPickTrack(null)}
+      />
+
+      {clipboardOffer ? (
+        <ClipboardBanner
+          url={clipboardOffer}
+          onAccept={acceptClipboard}
+          onDismiss={dismissClipboard}
+        />
+      ) : null}
+      {shareIntentAvailable ? <ShareIntentIntake onLink={enqueue} /> : null}
     </View>
   );
 }
@@ -218,6 +324,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.sm,
+  },
+  badge: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: {
+    color: colors.black,
+    fontSize: 10,
+    fontWeight: '800',
   },
   addBtn: {
     flexDirection: 'row',

@@ -42,7 +42,25 @@
           "recordAudioAndroid": false
         }
       ],
-      "expo-asset"
-    ]
+      "expo-asset",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsText": true
+          },
+          "androidIntentFilters": [
+            "text/*"
+          ]
+        }
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ab626a9a-0e5d-403f-ac99-74af6696ea14"
+      }
+    }
   }
 }
