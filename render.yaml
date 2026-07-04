@@ -14,3 +14,9 @@ services:
         sync: false
       - key: NODE_VERSION
         value: 20
+      # Free tier is 512MB RAM. Each concurrent playlist/album track spawns
+      # its own yt-dlp + ffmpeg + node (JS challenge solver) pipeline — more
+      # than 1 at a time risks an OOM kill on this plan. Raise this only on a
+      # host with more memory headroom.
+      - key: BATCH_CONCURRENCY
+        value: "1"
