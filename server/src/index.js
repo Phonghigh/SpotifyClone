@@ -107,6 +107,7 @@ app.post('/api/download', downloadLimiter, (req, res) => {
     analysis: null,
     error: null,
     file: null,
+    attempts: [], // [{ attempt, error, at }] — one entry per failed try before success/giveup
     createdAt: Date.now(),
   };
   jobs.set(id, job);
@@ -115,7 +116,30 @@ app.post('/api/download', downloadLimiter, (req, res) => {
   res.status(202).json({ id });
 });
 
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 3000;
+
+/** Retries the job pipeline on transient failures (e.g. the flaky YouTube
+ * bot-check seen on some videos), recording each failed try in job.attempts.
+ * Permanent errors (bad input) are marked `.permanent` and skip retries. */
 async function processJob(job) {
+  let lastErr;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      await runJobAttempt(job);
+      return;
+    } catch (err) {
+      lastErr = err;
+      job.attempts.push({ attempt, error: String(err?.message || err), at: Date.now() });
+      if (err?.permanent || attempt === MAX_ATTEMPTS) break;
+      console.warn(`[job ${job.id}] attempt ${attempt}/${MAX_ATTEMPTS} failed, retrying: ${lastErr.message}`);
+      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+    }
+  }
+  throw lastErr;
+}
+
+async function runJobAttempt(job) {
   job.status = 'resolving';
 
   let target = job.url;

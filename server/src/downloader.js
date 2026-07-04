@@ -157,7 +157,9 @@ function num(v) {
 export async function getSpotifyMeta(url) {
   const m = url.match(/spotify\.com\/(?:intl-[\w-]+\/)?(track|episode)\/([A-Za-z0-9]+)/i);
   if (!m) {
-    throw new Error('Only Spotify track/episode links are supported (not playlists/albums).');
+    const err = new Error('Only Spotify track/episode links are supported (not playlists/albums).');
+    err.permanent = true; // malformed input — retrying won't help
+    throw err;
   }
   const [, type, id] = m;
 
