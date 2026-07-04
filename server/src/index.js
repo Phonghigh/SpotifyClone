@@ -229,7 +229,7 @@ async function runJobAttempt(job) {
   job.status = 'done';
   console.log(
     `[job ${job.id}] done: ${job.artist ? job.artist + ' - ' : ''}${job.title} ` +
-      `[${result.label}, ~${job.quality.outputBitrateKbps ?? '?'} kbps, ${(result.quality.fileSizeBytes / 1e6).toFixed(1)} MB]`,
+      `[${result.label}, ~${job.quality.outputBitrateKbps ?? '?'} kbps, ${(result.quality.fileSizeBytes / 1e6).toFixed(1)} MB] ${memLine()}`,
   );
 }
 
@@ -262,6 +262,9 @@ async function processBatchJob(job) {
     ext: null,
   }));
   job.status = 'downloading';
+  console.log(
+    `[job ${job.id}] batch "${job.title}": ${job.trackCount} track(s), concurrency=${BATCH_CONCURRENCY} ${memLine()}`,
+  );
 
   await runWithConcurrency(job.children, BATCH_CONCURRENCY, (child) =>
     processChildTrack(job, child, meta.tracks[child.index]),
@@ -269,10 +272,19 @@ async function processBatchJob(job) {
 
   job.status = 'done';
   job.progress = 100;
+  console.log(`[job ${job.id}] batch "${job.title}" done ${memLine()}`);
+}
+
+/** One-line RSS snapshot, logged around each batch track so Render's memory
+ * chart can be correlated with exactly which track was running at a spike. */
+function memLine() {
+  const { rss } = process.memoryUsage();
+  return `(rss ${Math.round(rss / 1e6)}MB)`;
 }
 
 async function processChildTrack(job, child, raw) {
   child.status = 'resolving';
+  console.log(`[job ${job.id}] track ${child.index + 1}/${job.trackCount} "${child.title}" start ${memLine()}`);
   try {
     let target;
     let probe;
@@ -314,10 +326,14 @@ async function processChildTrack(job, child, raw) {
     child.ext = result.ext;
     child.progress = 100;
     child.status = 'done';
+    console.log(
+      `[job ${job.id}] track ${child.index + 1}/${job.trackCount} "${child.title}" done ` +
+        `(${(fs.statSync(result.file).size / 1e6).toFixed(1)} MB) ${memLine()}`,
+    );
   } catch (err) {
     child.status = 'error';
     child.error = String(err?.message || err);
-    console.warn(`[job ${job.id}] child ${child.index} (${child.title}) failed:`, child.error);
+    console.warn(`[job ${job.id}] child ${child.index} (${child.title}) failed: ${child.error} ${memLine()}`);
   }
 }
 
