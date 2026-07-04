@@ -19,6 +19,7 @@ import { usePlaylists } from './PlaylistsContext';
 import { useDownloadQueue } from './DownloadQueueContext';
 import type { Track } from './types';
 import { TrackRow } from './components/TrackRow';
+import { PressableScale } from './components/PressableScale';
 import { MiniPlayer } from './components/MiniPlayer';
 import { FullPlayer } from './components/FullPlayer';
 import { AddFromLink } from './components/AddFromLink';
@@ -122,31 +123,23 @@ export function LibraryScreen() {
         </View>
 
         <View style={styles.headerActions}>
-          <Pressable
-            onPress={() => setDownloadsOpen(true)}
-            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-            hitSlop={8}
-          >
+          <PressableScale onPress={() => setDownloadsOpen(true)} style={styles.iconBtn} hitSlop={8}>
             <Ionicons name="cloud-download-outline" size={20} color={colors.text} />
             {activeCount > 0 ? (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>{activeCount}</Text>
               </View>
             ) : null}
-          </Pressable>
+          </PressableScale>
 
-          <Pressable
-            onPress={() => setLinkOpen(true)}
-            style={({ pressed }) => [styles.iconBtn, pressed && styles.pressed]}
-            hitSlop={8}
-          >
+          <PressableScale onPress={() => setLinkOpen(true)} style={styles.iconBtn} hitSlop={8}>
             <Ionicons name="link" size={20} color={colors.text} />
-          </Pressable>
+          </PressableScale>
 
-          <Pressable
+          <PressableScale
             onPress={handleAdd}
             disabled={isImporting}
-            style={({ pressed }) => [styles.addBtn, pressed && styles.pressed]}
+            style={styles.addBtn}
             hitSlop={8}
           >
             {isImporting ? (
@@ -157,7 +150,7 @@ export function LibraryScreen() {
                 <Text style={styles.addBtnText}>Add</Text>
               </>
             )}
-          </Pressable>
+          </PressableScale>
         </View>
       </View>
 

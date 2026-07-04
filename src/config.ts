@@ -5,7 +5,7 @@ import { API_KEY as LOCAL_API_KEY } from './config.local';
  * `server/`). Update this to your deployed server's URL, or override at
  * runtime in the app's "Add from link" screen (Server settings).
  */
-export const DEFAULT_SERVER_URL = 'https://REPLACE_WITH_YOUR_RENDER_URL.onrender.com';
+export const DEFAULT_SERVER_URL = 'https://spotifyclone-uixh.onrender.com';
 
 /**
  * Sent as the `x-api-key` header on every request to the server. Must match

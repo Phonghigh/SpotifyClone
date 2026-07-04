@@ -7,6 +7,7 @@ import { glass } from '../liquid-theme';
 import type { Track } from '../types';
 import { Artwork } from './Artwork';
 import { EqualizerBars } from './EqualizerBars';
+import { PressableScale } from './PressableScale';
 
 type Props = {
   track: Track;
@@ -18,14 +19,11 @@ type Props = {
 
 function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onMore }: Props) {
   return (
-    <Pressable
+    <PressableScale
       onPress={onPress}
+      scaleTo={0.985}
       android_ripple={{ color: colors.surfaceHighlight }}
-      style={({ pressed }) => [
-        styles.row,
-        isCurrent && styles.rowCurrent,
-        pressed && styles.rowPressed,
-      ]}
+      style={[styles.row, isCurrent && styles.rowCurrent]}
     >
       <Artwork trackKey={track.id} size={52} />
 
@@ -50,7 +48,7 @@ function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onMore }: Pro
       <Pressable hitSlop={10} onPress={onMore} style={styles.moreBtn}>
         <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
       </Pressable>
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -66,9 +64,6 @@ const styles = StyleSheet.create({
   rowCurrent: {
     // Liquid Glass tint only — no BlurView in list rows (performance).
     backgroundColor: glass.light,
-  },
-  rowPressed: {
-    backgroundColor: colors.surface,
   },
   meta: {
     flex: 1,

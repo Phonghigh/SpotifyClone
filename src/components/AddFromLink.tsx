@@ -25,6 +25,7 @@ import {
   setDownloadFormat,
   setServerUrl,
 } from '../settings';
+import { DEFAULT_SERVER_URL } from '../config';
 
 type Props = {
   visible: boolean;
@@ -164,7 +165,7 @@ export function AddFromLink({ visible, onClose }: Props) {
                     style={styles.serverInput}
                     value={server}
                     onChangeText={setServer}
-                    placeholder="http://192.168.x.x:4000"
+                    placeholder={DEFAULT_SERVER_URL}
                     placeholderTextColor={colors.textMuted}
                     autoCapitalize="none"
                     autoCorrect={false}

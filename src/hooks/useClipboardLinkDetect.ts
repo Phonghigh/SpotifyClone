@@ -3,10 +3,7 @@ import { AppState, Platform } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 
 import { extractSupportedLink } from '../downloaderClient';
-import {
-  getLastOfferedClipboardUrl,
-  setLastOfferedClipboardUrl,
-} from '../settings';
+import { getLastOfferedClipboardUrl } from '../settings';
 
 /**
  * Watches the clipboard whenever the app becomes active. If it holds a new
@@ -17,7 +14,7 @@ import {
  */
 export function useClipboardLinkDetect(): {
   offer: string | null;
-  /** Hide the banner. Remembers the URL so it isn't offered again. */
+  /** Hide the banner without permanently suppressing the URL. */
   dismiss: () => void;
 } {
   const [offer, setOffer] = useState<string | null>(null);
@@ -57,10 +54,7 @@ export function useClipboardLinkDetect(): {
   }, [check]);
 
   const dismiss = useCallback(() => {
-    setOffer((current) => {
-      if (current) setLastOfferedClipboardUrl(current);
-      return null;
-    });
+    setOffer(null);
   }, []);
 
   return { offer, dismiss };

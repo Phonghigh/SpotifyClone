@@ -2,8 +2,15 @@ import React from 'react';
 import { Platform, StyleSheet, View, ViewStyle } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import Constants from 'expo-constants';
 
 import { glass } from '../liquid-theme';
+
+// Expo Go's pre-built APK does not ship eightbitlab.com.blurview (Dimezis BlurView),
+// which expo-blur's Android native view instantiates unconditionally in its class
+// initialiser — even when experimentalBlurMethod="none". Mounting any BlurView in Expo
+// Go throws NoClassDefFoundError and kills the JVM process. Use a plain View instead.
+const isExpoGo = Constants.executionEnvironment === 'storeClient';
 
 interface LiquidGlassProps {
   children: React.ReactNode;
@@ -14,12 +21,6 @@ interface LiquidGlassProps {
   specular?: boolean;
 }
 
-/**
- * Composable Liquid Glass surface: BlurView base + dark tint overlay +
- * specular top-edge highlight + hairline border. Android uses the
- * experimental blur method (falls back to translucent tint when
- * unavailable, e.g. some Expo Go devices).
- */
 export function LiquidGlass({
   children,
   intensity = glass.blurIntensity,
@@ -30,12 +31,22 @@ export function LiquidGlass({
 }: LiquidGlassProps) {
   return (
     <View style={[styles.container, { borderRadius: radius }, style]}>
-      <BlurView
-        intensity={intensity}
-        tint={tint}
-        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'}
-        style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
-      />
+      {isExpoGo ? (
+        // Expo Go: plain dark tint — no BlurView native view instantiated
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            { borderRadius: radius, backgroundColor: 'rgba(12,12,12,0.82)' },
+          ]}
+        />
+      ) : (
+        <BlurView
+          intensity={intensity}
+          tint={tint}
+          experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : 'none'}
+          style={[StyleSheet.absoluteFill, { borderRadius: radius }]}
+        />
+      )}
       {/* Glass tint overlay */}
       <View
         style={[

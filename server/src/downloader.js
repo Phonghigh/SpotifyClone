@@ -12,6 +12,36 @@ export const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
 /**
+ * YouTube's bot-check ("Sign in to confirm you're not a bot") blocks yt-dlp
+ * unless it presents cookies from a logged-in session. Export a Netscape
+ * cookies.txt (e.g. via the "Get cookies.txt LOCALLY" browser extension) and
+ * either:
+ *   - drop it at server/cookies.txt (or point YTDLP_COOKIES_FILE at it), or
+ *   - set YTDLP_COOKIES_CONTENT to the file's contents (for hosts like
+ *     Render with no persistent disk/browser) — it's written to the cookies
+ *     file path once at startup.
+ * Locally you can instead set YTDLP_COOKIES_FROM_BROWSER=chrome|firefox|...
+ * to read cookies straight from an installed browser.
+ */
+const COOKIES_FILE = process.env.YTDLP_COOKIES_FILE || path.join(ROOT, 'cookies.txt');
+if (process.env.YTDLP_COOKIES_CONTENT && !fs.existsSync(COOKIES_FILE)) {
+  // Tolerate the content being pasted as a quoted, \n-escaped .env-style
+  // value instead of the file's real (already-multiline) text.
+  const content = process.env.YTDLP_COOKIES_CONTENT.trim()
+    .replace(/^"|"$/g, '')
+    .replace(/\\n/g, '\n');
+  fs.writeFileSync(COOKIES_FILE, content);
+}
+
+function cookieArgs() {
+  if (fs.existsSync(COOKIES_FILE)) return ['--cookies', COOKIES_FILE];
+  if (process.env.YTDLP_COOKIES_FROM_BROWSER) {
+    return ['--cookies-from-browser', process.env.YTDLP_COOKIES_FROM_BROWSER];
+  }
+  return [];
+}
+
+/**
  * Output format presets. All start from the BEST available audio stream.
  * - mp3:     LAME V0 VBR (~245 kbps) — universal, great quality. Default.
  * - mp3-320: MP3 320 kbps CBR — biggest MP3 (note: source is usually <=160k).
@@ -155,6 +185,7 @@ function decodeHtml(s) {
 export async function getInfo(target) {
   try {
     const { stdout } = await ytdlp([
+      ...cookieArgs(),
       '--no-playlist',
       '--skip-download',
       '--no-warnings',
@@ -177,6 +208,7 @@ export async function getInfo(target) {
 export async function probeAudio(target) {
   try {
     const { stdout } = await ytdlp([
+      ...cookieArgs(),
       '-f',
       'bestaudio/best',
       '--no-playlist',
@@ -210,6 +242,7 @@ export async function downloadAudio({ target, jobId, format = 'mp3', onProgress 
   await ytdlp(
     [
       ...cfg.args,
+      ...cookieArgs(),
       '--no-playlist',
       '--no-warnings',
       '--newline',

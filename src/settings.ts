@@ -60,8 +60,7 @@ export function normalizeServerUrl(url: string): string {
 }
 
 export function getServerUrl(): string {
-  const saved = readSettings().serverUrl;
-  return (saved && saved.trim()) || DEFAULT_SERVER_URL;
+  return DEFAULT_SERVER_URL;
 }
 
 export function setServerUrl(url: string): void {

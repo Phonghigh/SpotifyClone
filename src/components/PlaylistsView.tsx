@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, gradientFor, radius, spacing } from '../theme';
 import { glass } from '../liquid-theme';
 import { LiquidGlass } from './LiquidGlass';
+import { PressableScale } from './PressableScale';
 import { usePlaylists } from '../PlaylistsContext';
 import type { Playlist } from '../playlists';
 
@@ -75,15 +76,12 @@ export function PlaylistsView({ onOpenPlaylist }: Props) {
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.listContent}
         ListHeaderComponent={
-          <Pressable
-            onPress={() => setCreating(true)}
-            style={({ pressed }) => [styles.newRow, pressed && styles.pressed]}
-          >
+          <PressableScale onPress={() => setCreating(true)} scaleTo={0.98} style={styles.newRow}>
             <View style={styles.newIcon}>
               <Ionicons name="add" size={26} color={colors.text} />
             </View>
             <Text style={styles.newText}>New playlist</Text>
-          </Pressable>
+          </PressableScale>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -93,10 +91,7 @@ export function PlaylistsView({ onOpenPlaylist }: Props) {
           </View>
         }
         renderItem={({ item }) => (
-          <Pressable
-            onPress={() => onOpenPlaylist(item.id)}
-            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-          >
+          <PressableScale onPress={() => onOpenPlaylist(item.id)} scaleTo={0.98} style={styles.row}>
             <PlaylistCover playlist={item} />
             <View style={styles.meta}>
               <Text numberOfLines={1} style={styles.name}>
@@ -107,7 +102,7 @@ export function PlaylistsView({ onOpenPlaylist }: Props) {
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-          </Pressable>
+          </PressableScale>
         )}
       />
 
@@ -157,9 +152,6 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: 140,
-  },
-  pressed: {
-    backgroundColor: colors.surface,
   },
   newRow: {
     flexDirection: 'row',

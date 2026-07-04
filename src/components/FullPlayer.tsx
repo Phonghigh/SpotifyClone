@@ -1,10 +1,13 @@
 console.log('[DIAG 7] FullPlayer loading');
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   Dimensions,
+  LayoutChangeEvent,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,7 +15,6 @@ import {
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Slider from '@react-native-community/slider';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 
 import { colors, gradientFor, spacing } from '../theme';
@@ -57,11 +59,44 @@ export function FullPlayer({ visible, onClose }: Props) {
   const [page, setPage] = useState(0);
   const pagerRef = useRef<ScrollView>(null);
 
+  const [mounted, setMounted] = useState(visible);
+  const translateY = useRef(new Animated.Value(SCREEN_H)).current;
+  const artScale = useRef(new Animated.Value(0.9)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+      translateY.setValue(SCREEN_H);
+      artScale.setValue(0.9);
+      Animated.spring(translateY, {
+        toValue: 0,
+        damping: glass.spring.damping,
+        stiffness: glass.spring.stiffness,
+        mass: glass.spring.mass,
+        useNativeDriver: true,
+      }).start();
+      Animated.spring(artScale, {
+        toValue: 1,
+        damping: 14,
+        stiffness: 140,
+        mass: 1,
+        useNativeDriver: true,
+      }).start();
+    } else if (mounted) {
+      Animated.timing(translateY, {
+        toValue: SCREEN_H,
+        duration: 240,
+        useNativeDriver: true,
+      }).start(() => setMounted(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
   useEffect(() => {
     setSeeking(false);
   }, [currentTrack?.id]);
 
-  if (!currentTrack) return null;
+  if (!currentTrack || !mounted) return null;
 
   const [gradientTop] = gradientFor(currentTrack.id);
   const sliderMax = duration > 0 ? duration : 1;
@@ -76,8 +111,8 @@ export function FullPlayer({ visible, onClose }: Props) {
   };
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <View style={styles.root}>
+    <Modal visible={mounted} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Animated.View style={[styles.root, { transform: [{ translateY }] }]}>
         <LinearGradient
           colors={[gradientTop, colors.background, colors.background]}
           locations={[0, 0.55, 1]}
@@ -113,18 +148,20 @@ export function FullPlayer({ visible, onClose }: Props) {
             {/* Page 1 — artwork */}
             <View style={styles.page}>
               <View style={styles.artWrap}>
-                <LinearGradient
-                  colors={gradientFor(currentTrack.id)}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.art}
-                >
-                  <Ionicons
-                    name="musical-notes"
-                    size={ART_SIZE * 0.32}
-                    color="rgba(255,255,255,0.92)"
-                  />
-                </LinearGradient>
+                <Animated.View style={{ transform: [{ scale: artScale }] }}>
+                  <LinearGradient
+                    colors={gradientFor(currentTrack.id)}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.art}
+                  >
+                    <Ionicons
+                      name="musical-notes"
+                      size={ART_SIZE * 0.32}
+                      color="rgba(255,255,255,0.92)"
+                    />
+                  </LinearGradient>
+                </Animated.View>
               </View>
             </View>
 
@@ -173,14 +210,9 @@ export function FullPlayer({ visible, onClose }: Props) {
 
           {/* Seek bar */}
           <View style={styles.seekWrap}>
-            <Slider
-              style={styles.slider}
-              minimumValue={0}
-              maximumValue={sliderMax}
+            <SeekBar
               value={sliderValue}
-              minimumTrackTintColor={colors.text}
-              maximumTrackTintColor="rgba(255,255,255,0.3)"
-              thumbTintColor={colors.text}
+              maximumValue={sliderMax}
               onValueChange={(v) => {
                 setSeeking(true);
                 setSeekValue(v);
@@ -235,10 +267,100 @@ export function FullPlayer({ visible, onClose }: Props) {
         </View>
 
         <UpNextSheet visible={queueOpen} onClose={() => setQueueOpen(false)} />
-      </View>
+      </Animated.View>
     </Modal>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Pure-JS seek bar (replaces @react-native-community/slider, which is not
+// available in Expo Go because it requires a custom native module).
+// ---------------------------------------------------------------------------
+
+type SeekBarProps = {
+  value: number;
+  maximumValue: number;
+  onValueChange: (v: number) => void;
+  onSlidingComplete: (v: number) => void;
+};
+
+function SeekBar({ value, maximumValue, onValueChange, onSlidingComplete }: SeekBarProps) {
+  const widthRef = useRef(0);
+  const isScrubbing = useRef(false);
+
+  const pan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (evt) => {
+        isScrubbing.current = true;
+        const frac = Math.min(Math.max(evt.nativeEvent.locationX / (widthRef.current || 1), 0), 1);
+        onValueChange(frac * maximumValue);
+      },
+      onPanResponderMove: (evt) => {
+        const frac = Math.min(Math.max(evt.nativeEvent.locationX / (widthRef.current || 1), 0), 1);
+        onValueChange(frac * maximumValue);
+      },
+      onPanResponderRelease: (evt) => {
+        const frac = Math.min(Math.max(evt.nativeEvent.locationX / (widthRef.current || 1), 0), 1);
+        onSlidingComplete(frac * maximumValue);
+        isScrubbing.current = false;
+      },
+      onPanResponderTerminate: () => {
+        isScrubbing.current = false;
+      },
+    }),
+  ).current;
+
+  const onLayout = (e: LayoutChangeEvent) => {
+    widthRef.current = e.nativeEvent.layout.width;
+  };
+
+  const frac = maximumValue > 0 ? Math.min(value / maximumValue, 1) : 0;
+
+  return (
+    <View style={seekStyles.root} onLayout={onLayout} {...pan.panHandlers}>
+      <View style={seekStyles.track}>
+        <View style={[seekStyles.filled, { flex: frac }]} />
+        <View style={[seekStyles.unfilled, { flex: 1 - frac }]} />
+      </View>
+      <View style={[seekStyles.thumb, { left: `${frac * 100}%` as any }]} />
+    </View>
+  );
+}
+
+const seekStyles = StyleSheet.create({
+  root: {
+    height: 36,
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  track: {
+    height: 3,
+    borderRadius: 2,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  filled: {
+    backgroundColor: colors.text,
+    borderRadius: 2,
+  },
+  unfilled: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    borderRadius: 2,
+  },
+  thumb: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.text,
+    marginLeft: -7,
+    top: '50%' as any,
+    marginTop: -7,
+  },
+});
 
 const styles = StyleSheet.create({
   root: {
@@ -338,10 +460,6 @@ const styles = StyleSheet.create({
   seekWrap: {
     marginTop: spacing.md,
     paddingHorizontal: spacing.xl,
-  },
-  slider: {
-    width: '100%',
-    height: 36,
   },
   timeRow: {
     flexDirection: 'row',
