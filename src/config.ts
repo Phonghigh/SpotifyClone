@@ -1,4 +1,4 @@
-import { API_KEY as LOCAL_API_KEY } from './config.local';
+import { API_KEY as LOCAL_API_KEY, LOCAL_SERVER_URL as LOCAL_DEV_SERVER_URL } from './config.local';
 
 /**
  * Default address of the companion downloader server (the Node app in
@@ -18,3 +18,11 @@ export const DEFAULT_SERVER_URL = 'https://spotifyclone-uixh.onrender.com';
  * Copy `src/config.local.example.ts` to `src/config.local.ts` and fill it in.
  */
 export const API_KEY = LOCAL_API_KEY;
+
+/**
+ * Default address for "Local (Wi-Fi)" server mode (AddFromLink → Server
+ * settings) — e.g. `http://10.0.0.5:4000`, matching `npm run dev` in
+ * `server/`. Set this in `src/config.local.ts` so it's pre-filled without
+ * retyping your LAN IP every time; still overridable in the app itself.
+ */
+export const LOCAL_SERVER_URL = LOCAL_DEV_SERVER_URL;

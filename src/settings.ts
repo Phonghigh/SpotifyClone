@@ -1,12 +1,18 @@
 import { File, Paths } from 'expo-file-system';
 
-import { DEFAULT_SERVER_URL } from './config';
+import { DEFAULT_SERVER_URL, LOCAL_SERVER_URL } from './config';
 import type { QueueSource, RepeatMode } from './types';
 
 const SETTINGS_FILE = 'settings.json';
 
 export type DownloadFormat = 'mp3' | 'mp3-320' | 'm4a';
 export const DEFAULT_FORMAT: DownloadFormat = 'mp3';
+
+/** 'cloud' = the deployed server (DEFAULT_SERVER_URL); 'local' = a dev
+ * server on your own machine, e.g. `npm run dev` in server/ on the same
+ * Wi-Fi — needed when the cloud host is IP-blocked for a given video. */
+export type ServerMode = 'cloud' | 'local';
+export const DEFAULT_SERVER_MODE: ServerMode = 'cloud';
 
 /** Snapshot of the play session, restored (paused) on next launch. */
 export type PlaybackState = {
@@ -18,7 +24,10 @@ export type PlaybackState = {
 };
 
 type Settings = {
-  serverUrl?: string;
+  serverMode?: ServerMode;
+  /** Address of a local dev server (e.g. http://10.0.0.5:4000), remembered
+   * separately from the cloud URL so switching modes doesn't lose either. */
+  localServerUrl?: string;
   downloadFormat?: DownloadFormat;
   /** Last clipboard link we offered to download — never offer it twice. */
   lastOfferedClipboardUrl?: string;
@@ -59,12 +68,30 @@ export function normalizeServerUrl(url: string): string {
   return u.replace(/\/+$/, '');
 }
 
-export function getServerUrl(): string {
-  return DEFAULT_SERVER_URL;
+export function getServerMode(): ServerMode {
+  return readSettings().serverMode || DEFAULT_SERVER_MODE;
 }
 
-export function setServerUrl(url: string): void {
-  update({ serverUrl: normalizeServerUrl(url) });
+export function setServerMode(mode: ServerMode): void {
+  update({ serverMode: mode });
+}
+
+export function getLocalServerUrl(): string {
+  return readSettings().localServerUrl || LOCAL_SERVER_URL || '';
+}
+
+export function setLocalServerUrl(url: string): void {
+  update({ localServerUrl: normalizeServerUrl(url) });
+}
+
+/** The server URL to actually use, based on the current mode. Falls back to
+ * the cloud URL if local mode is selected but no local address is set yet. */
+export function getServerUrl(): string {
+  if (getServerMode() === 'local') {
+    const local = getLocalServerUrl();
+    if (local) return local;
+  }
+  return DEFAULT_SERVER_URL;
 }
 
 export function getDownloadFormat(): DownloadFormat {

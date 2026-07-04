@@ -139,7 +139,12 @@ codec — so you can see exactly what you got.
 - Analysis (waveform/pitch) happens automatically for link downloads; for
   file-picker imports use **Analyze on server** on the Sound-map page.
 - Album art embedded in files isn't read; the app shows generated gradient art.
-- Spotify support covers single **track** links (not playlists/albums).
+- Spotify/YouTube playlist and album links download every track and auto-create
+  a local playlist named after the source. Very long Spotify playlists/albums
+  may be truncated (the public embed page only exposes a bounded track list —
+  there's no pagination without registering real Spotify API credentials).
+  Tracks that fail to resolve/download are skipped rather than failing the
+  whole batch.
 
 ## Project structure
 

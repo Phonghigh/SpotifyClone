@@ -129,6 +129,30 @@ export function detectSource(url) {
   return 'other';
 }
 
+/** Spotify link shape, including the `intl-xx/` locale prefix some links use. */
+const SPOTIFY_RE = /spotify\.com\/(?:intl-[\w-]+\/)?(track|episode|playlist|album)\/([A-Za-z0-9]+)/i;
+
+/** YouTube "list=" playlist param — present on /playlist and on /watch?v=...&list=... links. */
+const YT_LIST_RE = /[?&]list=([A-Za-z0-9_-]+)/i;
+
+/**
+ * Classify a URL as a single track/episode vs. a whole playlist/album, for
+ * both Spotify and YouTube. `detectSource` above stays source-only (used for
+ * job.source display); this adds the track/playlist/album distinction.
+ */
+export function classifyLink(url) {
+  const sm = url.match(SPOTIFY_RE);
+  if (sm) {
+    const [, type] = sm;
+    const kind = type === 'playlist' ? 'playlist' : type === 'album' ? 'album' : 'track';
+    return { source: 'spotify', kind };
+  }
+  if (/(^|\.)(youtube\.com|youtu\.be)/i.test(url)) {
+    return { source: 'youtube', kind: YT_LIST_RE.test(url) ? 'playlist' : 'track' };
+  }
+  return { source: 'other', kind: 'unknown' };
+}
+
 /** Run yt-dlp and resolve with collected stdout. */
 function ytdlp(args, { onLine } = {}) {
   return new Promise((resolve, reject) => {
@@ -167,9 +191,9 @@ function num(v) {
  * audio stream (no DRM is involved). We then look the song up on YouTube.
  */
 export async function getSpotifyMeta(url) {
-  const m = url.match(/spotify\.com\/(?:intl-[\w-]+\/)?(track|episode)\/([A-Za-z0-9]+)/i);
-  if (!m) {
-    const err = new Error('Only Spotify track/episode links are supported (not playlists/albums).');
+  const m = url.match(SPOTIFY_RE);
+  if (!m || (m[1] !== 'track' && m[1] !== 'episode')) {
+    const err = new Error('Only Spotify track/episode links are supported here (not playlists/albums).');
     err.permanent = true; // malformed input — retrying won't help
     throw err;
   }
@@ -216,6 +240,53 @@ export async function getSpotifyMeta(url) {
   artist = decodeHtml(artist || '').trim();
   if (!title) throw new Error('Could not read the Spotify track title.');
   return { title, artist };
+}
+
+/**
+ * Read public metadata for a Spotify playlist or album via the same
+ * no-auth embed page used by getSpotifyMeta. The embed page's __NEXT_DATA__
+ * blob only carries a bounded slice of the tracklist — long playlists/albums
+ * are truncated (no pagination without registering real Spotify Web API
+ * credentials, which is out of scope here). Callers get `truncated: true`
+ * when a declared total is larger than what was parsed.
+ */
+export async function getSpotifyPlaylistMeta(url) {
+  const m = url.match(SPOTIFY_RE);
+  if (!m || (m[1] !== 'playlist' && m[1] !== 'album')) {
+    throw new Error('Not a Spotify playlist/album link.');
+  }
+  const [, type, id] = m;
+
+  const res = await fetch(`https://open.spotify.com/embed/${type}/${id}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Spotaclone/1.0)' },
+  });
+  if (!res.ok) throw new Error(`Spotify returned HTTP ${res.status}`);
+  const html = await res.text();
+
+  const nd = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]+?)<\/script>/);
+  if (!nd) throw new Error('Could not read the Spotify playlist/album data.');
+  const data = JSON.parse(nd[1]);
+  const entity = data?.props?.pageProps?.state?.data?.entity;
+  if (!entity) throw new Error('Could not read the Spotify playlist/album data.');
+
+  const name = decodeHtml(entity.name || entity.title || 'Untitled playlist').trim();
+
+  const rawTracks = entity.trackList || entity.tracks?.items || [];
+  const tracks = rawTracks
+    .map((t) => ({
+      title: decodeHtml(t.title || t.name || '').trim(),
+      artist: decodeHtml(
+        t.subtitle || (Array.isArray(t.artists) ? t.artists.map((a) => a.name).join(', ') : ''),
+      ).trim(),
+    }))
+    .filter((t) => t.title);
+
+  if (!tracks.length) throw new Error('No tracks found in this Spotify playlist/album.');
+
+  const declaredTotal = entity.trackCount ?? entity.totalTracks ?? null;
+  const truncated = typeof declaredTotal === 'number' && declaredTotal > tracks.length;
+
+  return { name, tracks, truncated };
 }
 
 function decodeHtml(s) {
@@ -279,6 +350,36 @@ export async function getInfoAndProbe(target) {
   } catch {
     return { info: { title: 'Unknown title', artist: '' }, probe: {} };
   }
+}
+
+/**
+ * List a YouTube playlist's videos WITHOUT downloading or resolving full
+ * per-video metadata (fast) — uses --flat-playlist so yt-dlp only reads the
+ * playlist page itself, not each video page. Each listed video is later
+ * resolved/downloaded individually through the normal getInfoAndProbe /
+ * downloadAudio path (those keep --no-playlist, which is correct there).
+ */
+export async function getYoutubePlaylistMeta(url) {
+  const { stdout } = await ytdlp([
+    ...cookieArgs(),
+    ...proxyArgs(),
+    '--flat-playlist',
+    '--dump-single-json',
+    '--no-warnings',
+    url,
+  ]);
+  const data = JSON.parse(stdout);
+  const name = clean(data.title) || 'Untitled playlist';
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  const tracks = entries
+    .filter((e) => e && e.id)
+    .map((e) => ({
+      videoId: e.id,
+      title: clean(e.title) || 'Unknown title',
+      artist: clean(e.uploader) || clean(e.channel) || '',
+    }));
+  if (!tracks.length) throw new Error('No videos found in this YouTube playlist.');
+  return { name, tracks };
 }
 
 /**

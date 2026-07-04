@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LiquidGlass } from './LiquidGlass';
 import { glass } from '../liquid-theme';
 import { colors, spacing } from '../theme';
+import { classifyLink } from '../downloaderClient';
 
 const TOP = (Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 52) + 6;
 const AUTO_HIDE_MS = 8000;
@@ -42,6 +43,13 @@ export function ClipboardBanner({ url, onAccept, onDismiss }: Props) {
   }, [url, translateY, onDismiss]);
 
   const host = url.replace(/^https?:\/\/(www\.|m\.|music\.)?/i, '').split('/')[0];
+  const { kind } = classifyLink(url);
+  const title =
+    kind === 'playlist'
+      ? 'Playlist copied — download it all?'
+      : kind === 'album'
+        ? 'Album copied — download it all?'
+        : 'Link copied — download it?';
 
   return (
     <Animated.View style={[styles.wrap, { transform: [{ translateY }] }]}>
@@ -55,7 +63,7 @@ export function ClipboardBanner({ url, onAccept, onDismiss }: Props) {
             />
           </View>
           <View style={styles.body}>
-            <Text style={styles.title}>Link copied — download it?</Text>
+            <Text style={styles.title}>{title}</Text>
             <Text numberOfLines={1} style={styles.url}>
               {url}
             </Text>

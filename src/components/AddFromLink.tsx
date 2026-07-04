@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,14 +17,16 @@ import { colors, radius, spacing } from '../theme';
 import { glass } from '../liquid-theme';
 import { LiquidGlass } from './LiquidGlass';
 import { useDownloadQueue } from '../DownloadQueueContext';
-import { extractSupportedLink } from '../downloaderClient';
+import { classifyLink, extractSupportedLink } from '../downloaderClient';
 import {
   DownloadFormat,
+  ServerMode,
   getDownloadFormat,
-  getServerUrl,
-  normalizeServerUrl,
+  getLocalServerUrl,
+  getServerMode,
   setDownloadFormat,
-  setServerUrl,
+  setLocalServerUrl,
+  setServerMode,
 } from '../settings';
 import { DEFAULT_SERVER_URL } from '../config';
 
@@ -42,7 +45,8 @@ export function AddFromLink({ visible, onClose }: Props) {
   const { enqueue } = useDownloadQueue();
 
   const [url, setUrl] = useState('');
-  const [server, setServer] = useState('');
+  const [mode, setMode] = useState<ServerMode>('cloud');
+  const [localServer, setLocalServer] = useState('');
   const [format, setFormat] = useState<DownloadFormat>('mp3');
   const [showServer, setShowServer] = useState(false);
   const [invalid, setInvalid] = useState(false);
@@ -50,7 +54,8 @@ export function AddFromLink({ visible, onClose }: Props) {
   useEffect(() => {
     if (visible) {
       setUrl('');
-      setServer(getServerUrl());
+      setMode(getServerMode());
+      setLocalServer(getLocalServerUrl());
       setFormat(getDownloadFormat());
       setShowServer(false);
       setInvalid(false);
@@ -70,16 +75,43 @@ export function AddFromLink({ visible, onClose }: Props) {
     setDownloadFormat(f);
   }, []);
 
+  const pickMode = useCallback((m: ServerMode) => {
+    setMode(m);
+    setServerMode(m);
+  }, []);
+
   const handleAdd = useCallback(() => {
     const link = extractSupportedLink(url) ?? url.trim();
     if (!link || !/^https?:\/\//i.test(link)) {
       setInvalid(true);
       return;
     }
-    setServerUrl(normalizeServerUrl(server));
+    if (mode === 'local') {
+      setLocalServerUrl(localServer);
+    }
+
+    const { kind } = classifyLink(link);
+    if (kind === 'playlist' || kind === 'album') {
+      Alert.alert(
+        kind === 'album' ? 'Download whole album?' : 'Download whole playlist?',
+        `This link points to a full ${kind}. All available tracks will be downloaded into a new playlist — this can take a while.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Download all',
+            onPress: () => {
+              enqueue(link, format);
+              onClose();
+            },
+          },
+        ],
+      );
+      return;
+    }
+
     enqueue(link, format);
     onClose();
-  }, [url, server, format, enqueue, onClose]);
+  }, [url, mode, localServer, format, enqueue, onClose]);
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
@@ -161,18 +193,49 @@ export function AddFromLink({ visible, onClose }: Props) {
               </Pressable>
               {showServer ? (
                 <View>
-                  <TextInput
-                    style={styles.serverInput}
-                    value={server}
-                    onChangeText={setServer}
-                    placeholder={DEFAULT_SERVER_URL}
-                    placeholderTextColor={colors.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                  <Text style={styles.helper}>
-                    Address of the downloader server running on your computer.
-                  </Text>
+                  <View style={styles.formatRow}>
+                    <Pressable
+                      onPress={() => pickMode('cloud')}
+                      style={[styles.formatChip, mode === 'cloud' && styles.formatChipActive]}
+                    >
+                      <Text style={[styles.formatLabel, mode === 'cloud' && styles.formatLabelActive]}>
+                        Cloud
+                      </Text>
+                      <Text style={[styles.formatSub, mode === 'cloud' && styles.formatSubActive]}>
+                        Deployed server
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => pickMode('local')}
+                      style={[styles.formatChip, mode === 'local' && styles.formatChipActive]}
+                    >
+                      <Text style={[styles.formatLabel, mode === 'local' && styles.formatLabelActive]}>
+                        Local (Wi-Fi)
+                      </Text>
+                      <Text style={[styles.formatSub, mode === 'local' && styles.formatSubActive]}>
+                        Your computer
+                      </Text>
+                    </Pressable>
+                  </View>
+                  {mode === 'local' ? (
+                    <>
+                      <TextInput
+                        style={styles.serverInput}
+                        value={localServer}
+                        onChangeText={setLocalServer}
+                        placeholder="http://192.168.1.23:4000"
+                        placeholderTextColor={colors.textMuted}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <Text style={styles.helper}>
+                        Address of `npm run dev` running on your computer — phone and computer
+                        must be on the same Wi-Fi.
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.helper}>Using {DEFAULT_SERVER_URL}</Text>
+                  )}
                 </View>
               ) : null}
 

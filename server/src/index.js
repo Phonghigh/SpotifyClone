@@ -8,18 +8,25 @@ import path from 'node:path';
 import {
   DOWNLOADS_DIR,
   FORMATS,
-  detectSource,
+  classifyLink,
   downloadAudio,
   getInfoAndProbe,
   getSpotifyMeta,
+  getSpotifyPlaylistMeta,
+  getYoutubePlaylistMeta,
   probeAudio,
   ytdlpAvailable,
 } from './downloader.js';
 import { analyzeFile } from './analyze.js';
+import { runWithConcurrency } from './concurrency.js';
 
 const PORT = process.env.PORT || 4000;
 const API_KEY = process.env.API_KEY;
 const ALLOWED_FORMATS = Object.keys(FORMATS);
+// Cap how many tracks of ONE playlist/album batch download concurrently, so
+// a large playlist doesn't spawn dozens of simultaneous yt-dlp/ffmpeg
+// processes on this host.
+const BATCH_CONCURRENCY = Number(process.env.BATCH_CONCURRENCY) || 3;
 
 const app = express();
 // Render sits behind a reverse proxy; trust its X-Forwarded-For so
@@ -64,8 +71,9 @@ const jobs = new Map();
 // of those pipelines concurrently without risking an OOM kill.
 let jobQueue = Promise.resolve();
 function enqueueJob(job) {
+  const run = job.batch ? processBatchJob : processJob;
   jobQueue = jobQueue.then(() =>
-    processJob(job).catch((err) => {
+    run(job).catch((err) => {
       job.status = 'error';
       job.error = String(err?.message || err);
       console.error(`[job ${job.id}] failed:`, job.error);
@@ -92,12 +100,16 @@ app.post('/api/download', downloadLimiter, (req, res) => {
   }
 
   const format = ALLOWED_FORMATS.includes(req.body?.format) ? req.body.format : 'mp3';
+  const link = classifyLink(url);
+  const isBatch = link.kind === 'playlist' || link.kind === 'album';
   const id = crypto.randomUUID();
   const job = {
     id,
     url,
     format,
-    source: detectSource(url),
+    source: link.source,
+    kind: link.kind, // 'track' | 'playlist' | 'album' | 'unknown'
+    batch: isBatch,
     status: 'pending', // pending -> resolving -> downloading -> done | error
     progress: 0,
     title: null,
@@ -108,12 +120,15 @@ app.post('/api/download', downloadLimiter, (req, res) => {
     error: null,
     file: null,
     attempts: [], // [{ attempt, error, at }] — one entry per failed try before success/giveup
+    trackCount: null, // batch jobs only
+    truncated: null, // batch jobs only — Spotify embed scrape hit its listing limit
+    children: null, // batch jobs only — per-track sub-status
     createdAt: Date.now(),
   };
   jobs.set(id, job);
   enqueueJob(job);
 
-  res.status(202).json({ id });
+  res.status(202).json({ id, batch: isBatch });
 });
 
 const MAX_ATTEMPTS = 3;
@@ -139,6 +154,35 @@ async function processJob(job) {
   throw lastErr;
 }
 
+/**
+ * Given an already-resolved download target + source-quality probe, run the
+ * download and post-download analysis that's identical for a single-track
+ * job and for one child track inside a playlist/album batch.
+ */
+async function downloadResolvedTrack({ id, target, format, probe, onProgress }) {
+  const { file, ext, label } = await downloadAudio({ target, jobId: id, format, onProgress });
+
+  const size = fs.statSync(file).size;
+  const quality = {
+    sourceCodec: probe.sourceCodec || null,
+    sourceAbrKbps: probe.sourceAbrKbps || null,
+    sampleRateHz: probe.sampleRateHz || null,
+    outputFormat: label,
+    fileSizeBytes: size,
+    outputBitrateKbps: probe.durationSec ? Math.round((size * 8) / probe.durationSec / 1000) : null,
+    durationSec: probe.durationSec || null,
+  };
+
+  let analysis = null;
+  try {
+    analysis = await analyzeFile(file);
+  } catch (err) {
+    console.warn(`[track ${id}] analysis failed:`, err.message);
+  }
+
+  return { file, ext, label, quality, analysis };
+}
+
 async function runJobAttempt(job) {
   job.status = 'resolving';
 
@@ -161,46 +205,114 @@ async function runJobAttempt(job) {
     probe = combined.probe;
   }
 
-  job.quality = {
-    sourceCodec: probe.sourceCodec || null,
-    sourceAbrKbps: probe.sourceAbrKbps || null,
-    sampleRateHz: probe.sampleRateHz || null,
-  };
-
   job.status = 'downloading';
-  const { file, ext, label } = await downloadAudio({
+  const result = await downloadResolvedTrack({
+    id: job.id,
     target,
-    jobId: job.id,
     format: job.format,
+    probe,
     onProgress: (p) => {
       job.progress = p;
     },
   });
 
-  // Measure the actual output quality.
-  const size = fs.statSync(file).size;
-  job.file = file;
-  job.ext = ext;
-  job.quality.outputFormat = label;
-  job.quality.fileSizeBytes = size;
-  job.quality.outputBitrateKbps = probe.durationSec
-    ? Math.round((size * 8) / probe.durationSec / 1000)
-    : null;
-  job.quality.durationSec = probe.durationSec || null;
-
-  // Waveform + pitch analysis for the app's contour view (best effort).
-  try {
-    job.analysis = await analyzeFile(file);
-  } catch (err) {
-    console.warn(`[job ${job.id}] analysis failed:`, err.message);
-  }
-
+  job.file = result.file;
+  job.ext = result.ext;
+  job.quality = result.quality;
+  job.analysis = result.analysis;
   job.progress = 100;
   job.status = 'done';
   console.log(
     `[job ${job.id}] done: ${job.artist ? job.artist + ' - ' : ''}${job.title} ` +
-      `[${label}, ~${job.quality.outputBitrateKbps ?? '?'} kbps, ${(size / 1e6).toFixed(1)} MB]`,
+      `[${result.label}, ~${job.quality.outputBitrateKbps ?? '?'} kbps, ${(result.quality.fileSizeBytes / 1e6).toFixed(1)} MB]`,
   );
+}
+
+/**
+ * Resolve a playlist/album's track list, then download each track through
+ * the same probe/download/analyze pipeline as a single-track job — throttled
+ * to BATCH_CONCURRENCY at a time. A track that fails to resolve/download does
+ * NOT fail the batch; only a failure while listing the playlist/album itself
+ * (private, deleted, unparseable) does.
+ */
+async function processBatchJob(job) {
+  job.status = 'resolving';
+
+  const meta =
+    job.source === 'spotify'
+      ? await getSpotifyPlaylistMeta(job.url)
+      : await getYoutubePlaylistMeta(job.url);
+
+  job.title = meta.name;
+  job.trackCount = meta.tracks.length;
+  job.truncated = meta.truncated || false;
+  job.children = meta.tracks.map((t, index) => ({
+    index,
+    title: t.title,
+    artist: t.artist || '',
+    status: 'pending', // pending -> resolving -> downloading -> done | error
+    progress: 0,
+    error: null,
+    fileJobId: null,
+    ext: null,
+  }));
+  job.status = 'downloading';
+
+  await runWithConcurrency(job.children, BATCH_CONCURRENCY, (child) =>
+    processChildTrack(job, child, meta.tracks[child.index]),
+  );
+
+  job.status = 'done';
+  job.progress = 100;
+}
+
+async function processChildTrack(job, child, raw) {
+  child.status = 'resolving';
+  try {
+    let target;
+    let probe;
+    if (job.source === 'spotify') {
+      target = `ytsearch1:${[child.artist, child.title].filter(Boolean).join(' ')}`;
+      probe = await probeAudio(target);
+    } else {
+      target = `https://www.youtube.com/watch?v=${raw.videoId}`;
+      const combined = await getInfoAndProbe(target);
+      child.title = combined.info.title || child.title;
+      child.artist = combined.info.artist || child.artist;
+      probe = combined.probe;
+    }
+
+    child.status = 'downloading';
+    const fileJobId = crypto.randomUUID();
+    const result = await downloadResolvedTrack({
+      id: fileJobId,
+      target,
+      format: job.format,
+      probe,
+      onProgress: (p) => {
+        child.progress = p;
+      },
+    });
+
+    // Register a minimal entry so GET /api/file/:id can serve this child's
+    // file without any changes to that route.
+    jobs.set(fileJobId, {
+      id: fileJobId,
+      file: result.file,
+      ext: result.ext,
+      title: child.title,
+      artist: child.artist,
+    });
+
+    child.fileJobId = fileJobId;
+    child.ext = result.ext;
+    child.progress = 100;
+    child.status = 'done';
+  } catch (err) {
+    child.status = 'error';
+    child.error = String(err?.message || err);
+    console.warn(`[job ${job.id}] child ${child.index} (${child.title}) failed:`, child.error);
+  }
 }
 
 /**
@@ -231,6 +343,12 @@ app.post(
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
+  if (job.batch && job.children) {
+    const total = job.children.length || 1;
+    job.progress = Math.round(
+      job.children.reduce((sum, c) => sum + (c.progress || 0), 0) / total,
+    );
+  }
   const { file, ...publicJob } = job;
   res.json(publicJob);
 });
@@ -247,12 +365,32 @@ app.get('/api/file/:id', (req, res) => {
   fs.createReadStream(job.file).pipe(res);
 });
 
+/** Non-internal IPv4 addresses this machine has, one per network interface. */
+function lanAddresses() {
+  const nets = os.networkInterfaces();
+  const addrs = [];
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) addrs.push({ name, address: net.address });
+    }
+  }
+  return addrs;
+}
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log('========================================');
   console.log(' Spotaclone downloader server');
   console.log(`  Local:   http://localhost:${PORT}`);
-  console.log(`  Network: http://<your-LAN-IP>:${PORT}`);
+  const addrs = lanAddresses();
+  if (addrs.length) {
+    for (const { name, address } of addrs) {
+      console.log(`  Network: http://${address}:${PORT}  (${name})`);
+    }
+  } else {
+    console.log(`  Network: no LAN interface found — phone won't be able to reach this server`);
+  }
   console.log(`  yt-dlp:  ${ytdlpAvailable() ? 'ready' : 'MISSING (run: npm run setup)'}`);
+  console.log(`  proxy:   ${process.env.YTDLP_PROXY ? 'enabled' : 'none'}`);
   console.log(`  formats: ${ALLOWED_FORMATS.join(', ')}`);
   console.log(`  output:  ${DOWNLOADS_DIR}`);
   console.log('========================================');

@@ -11,14 +11,18 @@ import React, {
 import { File, Paths } from 'expo-file-system';
 
 import { usePlayer } from './PlayerContext';
+import { usePlaylists } from './PlaylistsContext';
 import { importRemoteTrack } from './library';
 import { saveAnalysis } from './analysis';
 import { initNotifications, notifyDownloadComplete } from './notifications';
 import { toast } from './components/Toast';
 import {
   ServerJob,
+  ServerJobChild,
+  classifyLink,
   getJob,
   jobFileUrl,
+  normalizeLink,
   submitDownload,
 } from './downloaderClient';
 import { DownloadFormat, getDownloadFormat, getServerUrl } from './settings';
@@ -30,6 +34,15 @@ export type DownloadItemStatus =
   | 'saving'
   | 'done'
   | 'error';
+
+export type DownloadChildStatus = {
+  index: number;
+  title?: string;
+  artist?: string;
+  status: ServerJobChild['status'];
+  progress: number;
+  error?: string | null;
+};
 
 export type DownloadItem = {
   id: string;
@@ -44,6 +57,13 @@ export type DownloadItem = {
   trackId?: string;
   addedAt: number;
   completedAt?: number;
+  /** Set when this link resolves to a whole playlist/album, not a single track. */
+  batch?: boolean;
+  kind?: 'track' | 'playlist' | 'album' | 'unknown';
+  trackCount?: number;
+  children?: DownloadChildStatus[];
+  playlistId?: string;
+  failedCount?: number;
 };
 
 export const ACTIVE_STATUSES: DownloadItemStatus[] = [
@@ -109,6 +129,7 @@ let nextItemId = Date.now();
 
 export function DownloadQueueProvider({ children }: { children: React.ReactNode }) {
   const { reloadLibrary } = usePlayer();
+  const { create: createPlaylist, addTrack: addTrackToPlaylist } = usePlaylists();
 
   const itemsRef = useRef<DownloadItem[]>(loadPersistedQueue());
   const [items, setItems] = useState<DownloadItem[]>(itemsRef.current);
@@ -125,6 +146,91 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
       mutate((prev) => prev.map((i) => (i.id === id ? { ...i, ...changes } : i)));
     },
     [mutate],
+  );
+
+  /**
+   * Handle one poll tick for a playlist/album batch job: import any newly
+   * completed child tracks into a lazily-created local Playlist, update the
+   * queue item's aggregate progress, and report completion. Returns true
+   * once the batch has fully settled (queue item done).
+   */
+  const processBatchTick = useCallback(
+    async (id: string, item: DownloadItem, base: string, job: ServerJob): Promise<boolean> => {
+      if (job.status === 'resolving') {
+        patch(id, { status: 'processing', title: job.title ?? undefined });
+        return false;
+      }
+
+      const current = itemsRef.current.find((i) => i.id === id);
+      let playlistId = current?.playlistId;
+      if (!playlistId && job.title) {
+        playlistId = createPlaylist(job.title).id;
+      }
+
+      const prevChildren = current?.children || [];
+      for (const child of job.children || []) {
+        const prev = prevChildren.find((c) => c.index === child.index);
+        if (child.status === 'done' && prev?.status !== 'done' && child.fileJobId) {
+          try {
+            const track = await importRemoteTrack({
+              fileUrl: jobFileUrl(base, child.fileJobId),
+              title: child.title || 'Unknown title',
+              artist: child.artist || '',
+              ext: child.ext || 'mp3',
+            });
+            if (playlistId) addTrackToPlaylist(playlistId, track.id);
+            reloadLibrary();
+          } catch (err: any) {
+            child.status = 'error';
+            child.error = String(err?.message || err);
+          }
+        }
+      }
+
+      const trackCount = job.trackCount ?? job.children?.length ?? 0;
+      const aggProgress = trackCount
+        ? Math.round(
+            (job.children || []).reduce(
+              (s, c) => s + (c.status === 'done' || c.status === 'error' ? 100 : c.progress || 0),
+              0,
+            ) / trackCount,
+          )
+        : job.progress || 0;
+      const failedCount = (job.children || []).filter((c) => c.status === 'error').length;
+
+      patch(id, {
+        status: job.status === 'done' ? 'done' : 'downloading',
+        progress: aggProgress,
+        title: job.title ?? undefined,
+        trackCount: job.trackCount ?? undefined,
+        playlistId,
+        children: (job.children || []).map((c) => ({
+          index: c.index,
+          title: c.title,
+          artist: c.artist,
+          status: c.status,
+          progress: c.progress,
+          error: c.error,
+        })),
+        failedCount,
+        ...(job.status === 'done' ? { completedAt: Date.now() } : {}),
+      });
+
+      if (job.status === 'done') {
+        const succeeded = trackCount - failedCount;
+        const label = job.title || item.url;
+        toast(
+          failedCount > 0
+            ? `Downloaded "${label}": ${succeeded} tracks (${failedCount} failed)`
+            : `Downloaded playlist "${label}" (${succeeded} tracks)`,
+          failedCount > 0 ? 'info' : 'success',
+        );
+        notifyDownloadComplete('Playlist download complete', label);
+        return true;
+      }
+      return false;
+    },
+    [patch, reloadLibrary, createPlaylist, addTrackToPlaylist],
   );
 
   /** Process one queue item start-to-finish. */
@@ -157,6 +263,12 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
           if (job.status === 'error') {
             throw new Error(job.error || 'Download failed.');
           }
+
+          if (job.batch) {
+            if (await processBatchTick(id, item, base, job)) return;
+            continue;
+          }
+
           if (job.status === 'downloading') {
             patch(id, {
               status: 'downloading',
@@ -200,7 +312,7 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
         toast(`Download failed: ${message}`, 'error');
       }
     },
-    [patch, reloadLibrary],
+    [patch, reloadLibrary, processBatchTick],
   );
 
   /** Sequential pump: drains the queue one item at a time. */
@@ -222,13 +334,15 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
     (url: string, format?: DownloadFormat): boolean => {
       const trimmed = url.trim();
       if (!trimmed) return false;
+      const normalized = normalizeLink(trimmed);
       const duplicate = itemsRef.current.find(
-        (i) => i.url === trimmed && ACTIVE_STATUSES.includes(i.status),
+        (i) => normalizeLink(i.url) === normalized && ACTIVE_STATUSES.includes(i.status),
       );
       if (duplicate) {
         toast('Already in the download queue', 'info');
         return false;
       }
+      const { kind } = classifyLink(trimmed);
       const item: DownloadItem = {
         id: `dl-${nextItemId++}`,
         url: trimmed,
@@ -236,6 +350,8 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
         status: 'queued',
         progress: 0,
         addedAt: Date.now(),
+        batch: kind === 'playlist' || kind === 'album',
+        kind,
       };
       mutate((prev) => [...prev, item]);
       toast('Added to download queue', 'success');

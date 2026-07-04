@@ -46,6 +46,13 @@ function QueueRow({ item }: { item: DownloadItem }) {
     item.status === 'processing' || item.status === 'downloading' || item.status === 'saving';
   const label =
     [item.artist, item.title].filter(Boolean).join(' – ') || item.url;
+  const statusText = item.status === 'error' && item.error ? item.error : STATUS_LABEL[item.status];
+  const countSuffix =
+    item.batch && item.trackCount
+      ? item.status === 'done'
+        ? `  ${item.trackCount - (item.failedCount || 0)}/${item.trackCount} tracks${item.failedCount ? ` (${item.failedCount} failed)` : ''}`
+        : `  ${item.trackCount} tracks`
+      : '';
 
   return (
     <View style={styles.row}>
@@ -56,7 +63,9 @@ function QueueRow({ item }: { item: DownloadItem }) {
               ? 'checkmark-circle'
               : item.status === 'error'
                 ? 'alert-circle'
-                : 'cloud-download'
+                : item.batch
+                  ? 'albums'
+                  : 'cloud-download'
           }
           size={22}
           color={STATUS_COLOR[item.status]}
@@ -68,8 +77,9 @@ function QueueRow({ item }: { item: DownloadItem }) {
           {label}
         </Text>
         <Text numberOfLines={item.status === 'error' ? 2 : 1} style={[styles.rowStatus, { color: STATUS_COLOR[item.status] }]}>
-          {item.status === 'error' && item.error ? item.error : STATUS_LABEL[item.status]}
-          {item.status === 'downloading' ? `  ${Math.round(item.progress)}%` : ''}
+          {statusText}
+          {item.status === 'downloading' && !item.batch ? `  ${Math.round(item.progress)}%` : ''}
+          {countSuffix}
         </Text>
         {active ? (
           <View style={styles.progressTrack}>

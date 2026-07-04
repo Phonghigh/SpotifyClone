@@ -12,16 +12,34 @@ export function authHeaders(): Record<string, string> {
 
 export type ServerJobStatus = 'pending' | 'resolving' | 'downloading' | 'done' | 'error';
 
+export type LinkKind = 'track' | 'playlist' | 'album' | 'unknown';
+
+export type ServerJobChild = {
+  index: number;
+  title: string;
+  artist: string;
+  status: ServerJobStatus;
+  progress: number;
+  error: string | null;
+  fileJobId: string | null;
+  ext: string | null;
+};
+
 export type ServerJob = {
   id: string;
   url: string;
   source: 'youtube' | 'spotify' | 'other';
+  kind?: LinkKind;
+  batch?: boolean;
   status: ServerJobStatus;
   progress: number;
   title: string | null;
   artist: string | null;
   ext: string | null;
   error: string | null;
+  trackCount?: number | null;
+  truncated?: boolean | null;
+  children?: ServerJobChild[] | null;
   quality: {
     outputFormat?: string;
     outputBitrateKbps?: number | null;
@@ -36,6 +54,23 @@ export type ServerJob = {
     durationSec?: number | null;
   } | null;
 };
+
+const SPOTIFY_RE = /spotify\.com\/(?:intl-[\w-]+\/)?(track|episode|playlist|album)\/[A-Za-z0-9]+/i;
+const YT_LIST_RE = /[?&]list=[A-Za-z0-9_-]+/i;
+
+/** Classify a link as a single track vs. a whole playlist/album, mirroring server/src/downloader.js's classifyLink. */
+export function classifyLink(url: string): { source: 'spotify' | 'youtube' | 'other'; kind: LinkKind } {
+  const sm = url.match(SPOTIFY_RE);
+  if (sm) {
+    const type = sm[1];
+    const kind: LinkKind = type === 'playlist' ? 'playlist' : type === 'album' ? 'album' : 'track';
+    return { source: 'spotify', kind };
+  }
+  if (/(youtube\.com|youtu\.be)/i.test(url)) {
+    return { source: 'youtube', kind: YT_LIST_RE.test(url) ? 'playlist' : 'track' };
+  }
+  return { source: 'other', kind: 'unknown' };
+}
 
 export async function fetchWithTimeout(
   url: string,
@@ -57,6 +92,25 @@ export function extractSupportedLink(text: string): string | null {
     /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be|open\.spotify\.com)\/\S+/i,
   );
   return match ? match[0].replace(/[)\]}>,.]+$/, '') : null;
+}
+
+/**
+ * Canonicalize a link so the same track shared/pasted twice compares equal
+ * even though each share carries its own tracking query params (Spotify's
+ * `si`, YouTube's `si`/`feature`/etc.) — used to dedupe the download queue.
+ */
+export function normalizeLink(url: string): string {
+  const sm = url.match(/open\.spotify\.com\/(?:intl-[\w-]+\/)?(track|episode|playlist|album)\/([A-Za-z0-9]+)/i);
+  if (sm) return `spotify:${sm[1]}:${sm[2]}`;
+
+  const ytList = url.match(/[?&]list=([A-Za-z0-9_-]+)/i);
+  if (ytList) return `youtube:playlist:${ytList[1]}`;
+
+  const ytId =
+    url.match(/(?:youtube\.com\/watch\?[^#]*\bv=|youtu\.be\/)([A-Za-z0-9_-]{6,})/i);
+  if (ytId) return `youtube:track:${ytId[1]}`;
+
+  return url;
 }
 
 export class ServerUnreachableError extends Error {
