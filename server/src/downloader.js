@@ -68,6 +68,12 @@ function cookieArgs() {
   return [];
 }
 
+// YouTube's stream URLs are signature-obfuscated with a JS challenge; the
+// bundled yt-dlp needs an external JS runtime to solve it or it can only see
+// storyboard/thumbnail formats. This host always has Node available (it's
+// what runs this server), so use that rather than requiring Deno.
+const JS_RUNTIME_ARGS = ['--js-runtimes', 'node'];
+
 /**
  * Output format presets. All start from the BEST available audio stream.
  * - mp3:     LAME V0 VBR (~245 kbps) — universal, great quality. Default.
@@ -213,6 +219,7 @@ export async function getInfo(target) {
   try {
     const { stdout } = await ytdlp([
       ...cookieArgs(),
+      ...JS_RUNTIME_ARGS,
       '--no-playlist',
       '--skip-download',
       '--no-warnings',
@@ -236,6 +243,7 @@ export async function probeAudio(target) {
   try {
     const { stdout } = await ytdlp([
       ...cookieArgs(),
+      ...JS_RUNTIME_ARGS,
       '-f',
       'bestaudio/best',
       '--no-playlist',
@@ -270,6 +278,7 @@ export async function downloadAudio({ target, jobId, format = 'mp3', onProgress 
     [
       ...cfg.args,
       ...cookieArgs(),
+      ...JS_RUNTIME_ARGS,
       '--no-playlist',
       '--no-warnings',
       '--newline',
