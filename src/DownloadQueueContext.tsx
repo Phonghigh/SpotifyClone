@@ -12,7 +12,7 @@ import { File, Paths } from 'expo-file-system';
 
 import { usePlayer } from './PlayerContext';
 import { usePlaylists } from './PlaylistsContext';
-import { importRemoteTrack } from './library';
+import { findExistingTrack, importRemoteTrack, trackFileExists } from './library';
 import { saveAnalysis } from './analysis';
 import { initNotifications, notifyDownloadComplete } from './notifications';
 import { toast } from './components/Toast';
@@ -172,14 +172,21 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
         const prev = prevChildren.find((c) => c.index === child.index);
         if (child.status === 'done' && prev?.status !== 'done' && child.fileJobId) {
           try {
-            const track = await importRemoteTrack({
-              fileUrl: jobFileUrl(base, child.fileJobId),
-              title: child.title || 'Unknown title',
-              artist: child.artist || '',
-              ext: child.ext || 'mp3',
-            });
+            // Skip children already saved in the library (e.g. downloaded
+            // earlier as a single track) — just link them into the playlist.
+            const existing = child.title
+              ? findExistingTrack(child.title, child.artist || '')
+              : null;
+            const track =
+              existing ??
+              (await importRemoteTrack({
+                fileUrl: jobFileUrl(base, child.fileJobId),
+                title: child.title || 'Unknown title',
+                artist: child.artist || '',
+                ext: child.ext || 'mp3',
+              }));
             if (playlistId) addTrackToPlaylist(playlistId, track.id);
-            reloadLibrary();
+            if (!existing) reloadLibrary();
           } catch (err: any) {
             child.status = 'error';
             child.error = String(err?.message || err);
@@ -283,6 +290,14 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
               title: job.title ?? undefined,
               artist: job.artist ?? undefined,
             });
+            // Already saved under the same "Artist - Title" name? Reuse it
+            // instead of writing a duplicate "(2)" copy.
+            const existing = job.title ? findExistingTrack(job.title, job.artist || '') : null;
+            if (existing) {
+              patch(id, { status: 'done', trackId: existing.id, completedAt: Date.now() });
+              toast(`Already in your library: ${existing.title}`, 'info');
+              return;
+            }
             const track = await importRemoteTrack({
               fileUrl: jobFileUrl(base, jobId),
               title: job.title || 'Unknown title',
@@ -340,6 +355,18 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
       );
       if (duplicate) {
         toast('Already in the download queue', 'info');
+        return false;
+      }
+      // Same link finished before and its file is still on the device →
+      // don't download it again. (Deleting the song re-enables the download.)
+      const alreadyDownloaded = itemsRef.current.find(
+        (i) =>
+          i.status === 'done' &&
+          normalizeLink(i.url) === normalized &&
+          (i.batch || (i.trackId != null && trackFileExists(i.trackId))),
+      );
+      if (alreadyDownloaded) {
+        toast('Already downloaded', 'info');
         return false;
       }
       const { kind } = classifyLink(trimmed);

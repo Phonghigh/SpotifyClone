@@ -107,6 +107,44 @@ export async function importSongs(): Promise<ImportResult> {
   return { added, skipped };
 }
 
+/** Stem (name without extension), lowercased, for duplicate comparisons. */
+function normalizedStem(fileName: string): string {
+  const dot = fileName.lastIndexOf('.');
+  const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+  return stem.trim().toLowerCase();
+}
+
+/** True when a previously downloaded file (by exact file name) still exists. */
+export function trackFileExists(fileName: string): boolean {
+  const dir = musicDir();
+  if (!dir.exists) return false;
+  return new File(dir, fileName).exists;
+}
+
+/**
+ * Look up a track already saved in the music folder that matches the given
+ * title/artist (the same "Artist - Title" naming importRemoteTrack uses).
+ * Used to skip re-downloading songs that are already in the library.
+ */
+export function findExistingTrack(title: string, artist?: string): Track | null {
+  const dir = musicDir();
+  if (!dir.exists) return null;
+
+  const cleanArtist = artist?.trim();
+  const base = cleanArtist ? `${cleanArtist} - ${title}` : title;
+  const wanted = normalizedStem(sanitizeFileName(base));
+  if (!wanted) return null;
+
+  for (const entry of dir.list()) {
+    if (entry instanceof File && isAudioFileName(entry.name)) {
+      if (normalizedStem(entry.name) === wanted) {
+        return trackFromFile(entry.name, entry.uri);
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Download an already-prepared audio file (e.g. produced by the companion
  * downloader server) straight into the persistent music folder.

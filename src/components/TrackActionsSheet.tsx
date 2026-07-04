@@ -49,8 +49,11 @@ export function TrackActionsSheet({ track, onClose, onAddToPlaylist, playlistCon
 
   if (!track) return null;
 
+  console.log('[DIAG 11] TrackActionsSheet open — rows: play-next, add-queue, add-playlist,', playlistContext ? 'remove-from-playlist,' : '', 'DELETE');
+
   const confirmDelete = () => {
-    onClose();
+    // Keep the sheet open while the alert is up — dismissing the modal first
+    // can swallow the alert on iOS, so nothing would appear to happen.
     Alert.alert('Delete song', `Delete "${track.title}" from this phone?`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -59,6 +62,8 @@ export function TrackActionsSheet({ track, onClose, onAddToPlaylist, playlistCon
         onPress: () => {
           removeTrack(track.id);
           stripTrack(track.id); // keep playlists consistent
+          onClose();
+          toast('Deleted from library', 'success');
         },
       },
     ]);

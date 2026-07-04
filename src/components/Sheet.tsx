@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Dimensions, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LiquidGlass } from './LiquidGlass';
 import { glass } from '../liquid-theme';
@@ -19,6 +20,7 @@ const SCREEN_H = Dimensions.get('window').height;
 
 /** Shared Liquid Glass bottom sheet used by all the small modal panels. */
 export function Sheet({ visible, onClose, title, children, headerRight }: Props) {
+  const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
   const translateY = useRef(new Animated.Value(SCREEN_H)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -50,13 +52,29 @@ export function Sheet({ visible, onClose, title, children, headerRight }: Props)
   if (!mounted) return null;
 
   return (
-    <Modal visible={mounted} animationType="none" transparent onRequestClose={onClose}>
+    <Modal
+      visible={mounted}
+      animationType="none"
+      transparent
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
       <View style={styles.backdrop}>
         <Animated.View style={[StyleSheet.absoluteFill, styles.backdropTint, { opacity: backdropOpacity }]} />
         <Pressable style={styles.backdropTouch} onPress={onClose} />
-        <Animated.View style={{ transform: [{ translateY }] }}>
+        <Animated.View style={{ transform: [{ translateY }], maxHeight: SCREEN_H * 0.8 }}>
           <LiquidGlass radius={glass.radius.xl} style={styles.sheet} intensity={70}>
-            <View style={styles.inner}>
+            {/* Bottom inset: keep the last row above the Android nav bar / iOS home indicator. */}
+            <View
+              style={[styles.inner, { paddingBottom: styles.inner.paddingBottom + insets.bottom }]}
+              onLayout={(e) =>
+                console.log(
+                  '[DIAG 12] Sheet inner height:', Math.round(e.nativeEvent.layout.height),
+                  'window:', Math.round(SCREEN_H), 'insetBottom:', insets.bottom,
+                )
+              }
+            >
               <View style={styles.grabber} />
               {title != null ? (
                 <View style={styles.headerRow}>
@@ -69,7 +87,10 @@ export function Sheet({ visible, onClose, title, children, headerRight }: Props)
                   </View>
                 </View>
               ) : null}
-              {children}
+              {/* Scrollable so no action row can ever be pushed off-screen. */}
+              <ScrollView style={styles.scroll} bounces={false} showsVerticalScrollIndicator={false}>
+                {children}
+              </ScrollView>
             </View>
           </LiquidGlass>
         </Animated.View>
@@ -93,7 +114,10 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
     backgroundColor: 'rgba(18,18,18,0.72)',
-    maxHeight: '78%',
+    maxHeight: '90%'
+  },
+  scroll: {
+    flexGrow: 0,
   },
   inner: {
     padding: spacing.xl,

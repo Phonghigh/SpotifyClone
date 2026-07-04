@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, radius, spacing } from '../theme';
 import { glass } from '../liquid-theme';
@@ -108,6 +109,7 @@ function QueueRow({ item }: { item: DownloadItem }) {
 }
 
 export function DownloadsSheet({ visible, onClose }: Props) {
+  const insets = useSafeAreaInsets();
   const { items, clearCompleted } = useDownloadQueue();
   const hasDone = items.some((i) => i.status === 'done');
   const sorted = [...items].sort((a, b) => b.addedAt - a.addedAt);
@@ -117,7 +119,7 @@ export function DownloadsSheet({ visible, onClose }: Props) {
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropTouch} onPress={onClose} />
         <LiquidGlass radius={glass.radius.xl} style={styles.sheet} intensity={70}>
-          <View style={styles.inner}>
+          <View style={[styles.inner, { paddingBottom: styles.inner.paddingBottom + insets.bottom }]}>
             <View style={styles.grabber} />
             <View style={styles.headerRow}>
               <Text style={styles.title}>Downloads</Text>

@@ -1,5 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { PlayerProvider } from './src/PlayerContext';
 import { PlaylistsProvider } from './src/PlaylistsContext';
@@ -12,6 +13,7 @@ import { colors } from './src/theme';
 export default function App() {
   return (
     <ErrorBoundary>
+      <SafeAreaProvider>
       <View style={styles.container}>
         <StatusBar style="light" />
         <PlayerProvider>
@@ -23,6 +25,7 @@ export default function App() {
           </PlaylistsProvider>
         </PlayerProvider>
       </View>
+      </SafeAreaProvider>
     </ErrorBoundary>
   );
 }

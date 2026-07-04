@@ -159,7 +159,7 @@ async function processJob(job) {
  * download and post-download analysis that's identical for a single-track
  * job and for one child track inside a playlist/album batch.
  */
-async function downloadResolvedTrack({ id, target, format, probe, onProgress }) {
+async function downloadResolvedTrack({ id, target, format, probe, onProgress, skipAnalysis = false }) {
   const { file, ext, label } = await downloadAudio({ target, jobId: id, format, onProgress });
 
   const size = fs.statSync(file).size;
@@ -173,11 +173,16 @@ async function downloadResolvedTrack({ id, target, format, probe, onProgress }) 
     durationSec: probe.durationSec || null,
   };
 
+  // Batch (playlist/album) children never surface this to the app, so skip
+  // the ffmpeg PCM decode + pitch detection entirely — real memory/CPU cost
+  // for no benefit, and this host's RAM budget is already tight.
   let analysis = null;
-  try {
-    analysis = await analyzeFile(file);
-  } catch (err) {
-    console.warn(`[track ${id}] analysis failed:`, err.message);
+  if (!skipAnalysis) {
+    try {
+      analysis = await analyzeFile(file);
+    } catch (err) {
+      console.warn(`[track ${id}] analysis failed:`, err.message);
+    }
   }
 
   return { file, ext, label, quality, analysis };
@@ -289,6 +294,7 @@ async function processChildTrack(job, child, raw) {
       target,
       format: job.format,
       probe,
+      skipAnalysis: true,
       onProgress: (p) => {
         child.progress = p;
       },
