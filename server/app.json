@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "88b46945-d7f6-49d7-8e90-1fd8b578242c"
+      }
+    },
+    "android": {
+      "package": "com.phongcloud2201.spotaclonedownloader"
+    }
+  }
+}

@@ -4,3 +4,8 @@ downloads/
 cookies.txt
 .env
 *.log
+
+# generated native project (expo run:android / eas build)
+android/
+ios/
+.expo/
