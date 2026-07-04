@@ -115,8 +115,11 @@ export function normalizeLink(url: string): string {
 
 export class ServerUnreachableError extends Error {
   constructor(base: string) {
+    const isLocal = /^https?:\/\/(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i.test(base);
     super(
-      `Can't reach the server at ${base}. Make sure it's running ("npm start" in the server folder) and on the same Wi-Fi.`,
+      isLocal
+        ? `Can't reach the server at ${base}. Make sure it's running ("npm start" in the server folder) and your phone is on the same Wi-Fi.`
+        : `Can't reach ${base}. Check your phone's internet connection, or the server may be slow to wake up — try again in a moment.`,
     );
     this.name = 'ServerUnreachableError';
   }
@@ -130,11 +133,18 @@ export async function submitDownload(
 ): Promise<string> {
   let res: Response;
   try {
-    res = await fetchWithTimeout(`${base}/api/download`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ url, format }),
-    });
+    // Render's free tier can take 30-60s to wake from an idle spin-down —
+    // give this one-shot call enough headroom, since (unlike job polling)
+    // there's no retry loop around it.
+    res = await fetchWithTimeout(
+      `${base}/api/download`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ url, format }),
+      },
+      60000,
+    );
   } catch (err: any) {
     if (err?.name === 'AbortError' || /network/i.test(String(err?.message))) {
       throw new ServerUnreachableError(base);
