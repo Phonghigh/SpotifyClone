@@ -10,7 +10,7 @@ import {
   FORMATS,
   detectSource,
   downloadAudio,
-  getInfo,
+  getInfoAndProbe,
   getSpotifyMeta,
   probeAudio,
   ytdlpAvailable,
@@ -59,6 +59,20 @@ const downloadLimiter = rateLimit({
 /** @type {Map<string, any>} */
 const jobs = new Map();
 
+// Run downloads one at a time — each spawns yt-dlp/ffmpeg/node child
+// processes, and this host's memory budget is too small to run several
+// of those pipelines concurrently without risking an OOM kill.
+let jobQueue = Promise.resolve();
+function enqueueJob(job) {
+  jobQueue = jobQueue.then(() =>
+    processJob(job).catch((err) => {
+      job.status = 'error';
+      job.error = String(err?.message || err);
+      console.error(`[job ${job.id}] failed:`, job.error);
+    }),
+  );
+}
+
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
@@ -96,12 +110,7 @@ app.post('/api/download', downloadLimiter, (req, res) => {
     createdAt: Date.now(),
   };
   jobs.set(id, job);
-
-  processJob(job).catch((err) => {
-    job.status = 'error';
-    job.error = String(err?.message || err);
-    console.error(`[job ${id}] failed:`, job.error);
-  });
+  enqueueJob(job);
 
   res.status(202).json({ id });
 });
@@ -110,20 +119,24 @@ async function processJob(job) {
   job.status = 'resolving';
 
   let target = job.url;
+  let probe;
   if (job.source === 'spotify') {
     const meta = await getSpotifyMeta(job.url);
     job.title = meta.title;
     job.artist = meta.artist;
     target = `ytsearch1:${[meta.artist, meta.title].filter(Boolean).join(' ')}`;
     console.log(`[job ${job.id}] spotify -> "${target}"`);
+    // Inspect the best available source audio (the quality ceiling).
+    probe = await probeAudio(target);
   } else {
-    const info = await getInfo(job.url);
-    job.title = info.title;
-    job.artist = info.artist;
+    // One yt-dlp call instead of two (getInfo + probeAudio) — same target,
+    // halves the per-job process/memory overhead.
+    const combined = await getInfoAndProbe(target);
+    job.title = combined.info.title;
+    job.artist = combined.info.artist;
+    probe = combined.probe;
   }
 
-  // Inspect the best available source audio (the quality ceiling).
-  const probe = await probeAudio(target);
   job.quality = {
     sourceCodec: probe.sourceCodec || null,
     sourceAbrKbps: probe.sourceAbrKbps || null,

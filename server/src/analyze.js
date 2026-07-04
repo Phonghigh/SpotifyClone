@@ -13,6 +13,7 @@ import ffmpegPath from 'ffmpeg-static';
 
 const PEAK_BUCKETS = 240;
 const PEAKS_SAMPLE_RATE = 8000;
+const PEAKS_MAX_SECONDS = 1800; // guard against runaway memory on very long inputs
 const PITCH_SAMPLE_RATE = 11025;
 const PITCH_MAX_SECONDS = 360;
 const PITCH_FRAME = 1024;
@@ -194,7 +195,7 @@ function computePitch(pcm, sampleRate) {
  * Returns { peaks, pitch, durationSec }.
  */
 export async function analyzeFile(filePath) {
-  const peaksPcm = await extractPcm(filePath, PEAKS_SAMPLE_RATE);
+  const peaksPcm = await extractPcm(filePath, PEAKS_SAMPLE_RATE, PEAKS_MAX_SECONDS);
   const durationSec = Math.round((peaksPcm.length / PEAKS_SAMPLE_RATE) * 10) / 10;
   const peaks = computePeaks(peaksPcm);
 

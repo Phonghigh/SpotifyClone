@@ -216,23 +216,8 @@ function decodeHtml(s) {
 
 /** Get a display title/artist for a direct URL (YouTube or other). */
 export async function getInfo(target) {
-  try {
-    const { stdout } = await ytdlp([
-      ...cookieArgs(),
-      ...JS_RUNTIME_ARGS,
-      '--no-playlist',
-      '--skip-download',
-      '--no-warnings',
-      '--print',
-      '%(title)s\t%(artist)s\t%(uploader)s',
-      target,
-    ]);
-    const [title, artist, uploader] = stdout.trim().split('\t');
-    const cleanArtist = clean(artist) || clean(uploader) || '';
-    return { title: clean(title) || 'Unknown title', artist: cleanArtist };
-  } catch {
-    return { title: 'Unknown title', artist: '' };
-  }
+  const { info } = await getInfoAndProbe(target);
+  return info;
 }
 
 /**
@@ -240,6 +225,17 @@ export async function getInfo(target) {
  * (codec, bitrate, sample rate) — this is the ceiling the source allows.
  */
 export async function probeAudio(target) {
+  const { probe } = await getInfoAndProbe(target);
+  return probe;
+}
+
+/**
+ * Combines getInfo + probeAudio into a single yt-dlp invocation. Each
+ * yt-dlp call (and the Node subprocess it spawns to solve YouTube's JS
+ * challenge) has real memory overhead, and both calls hit the same target
+ * URL — merging them halves that overhead per job.
+ */
+export async function getInfoAndProbe(target) {
   try {
     const { stdout } = await ytdlp([
       ...cookieArgs(),
@@ -250,20 +246,23 @@ export async function probeAudio(target) {
       '--skip-download',
       '--no-warnings',
       '--print',
-      '%(acodec)s\t%(abr)s\t%(asr)s\t%(ext)s\t%(format_note)s\t%(duration)s',
+      '%(title)s\t%(artist)s\t%(uploader)s\t%(acodec)s\t%(abr)s\t%(asr)s\t%(ext)s\t%(format_note)s\t%(duration)s',
       target,
     ]);
-    const [acodec, abr, asr, ext, note, duration] = stdout.trim().split('\t');
+    const [title, artist, uploader, acodec, abr, asr, ext, note, duration] = stdout.trim().split('\t');
     return {
-      sourceCodec: clean(acodec),
-      sourceAbrKbps: abr ? Math.round(num(abr) ?? 0) || null : null,
-      sampleRateHz: num(asr),
-      sourceExt: clean(ext),
-      sourceNote: clean(note),
-      durationSec: num(duration),
+      info: { title: clean(title) || 'Unknown title', artist: clean(artist) || clean(uploader) || '' },
+      probe: {
+        sourceCodec: clean(acodec),
+        sourceAbrKbps: abr ? Math.round(num(abr) ?? 0) || null : null,
+        sampleRateHz: num(asr),
+        sourceExt: clean(ext),
+        sourceNote: clean(note),
+        durationSec: num(duration),
+      },
     };
   } catch {
-    return {};
+    return { info: { title: 'Unknown title', artist: '' }, probe: {} };
   }
 }
 
