@@ -66,6 +66,44 @@ const downloadLimiter = rateLimit({
 /** @type {Map<string, any>} */
 const jobs = new Map();
 
+// Neither job entries nor their downloaded files were ever cleaned up —
+// on a long album/playlist batch (dozens of tracks, all processed inside one
+// continuous request) that grows both the Map and disk usage without bound,
+// contributing to OOM on memory-constrained hosts. Sweep periodically instead
+// of waiting for the whole batch job to finish, so a big album frees each
+// track's memory/disk as it goes.
+const JOB_TTL_MS = 10 * 60 * 1000; // long enough for the phone to have polled + fetched the file
+const SWEEP_INTERVAL_MS = 2 * 60 * 1000;
+
+function sweepOldJobs() {
+  const now = Date.now();
+  let removed = 0;
+  for (const [id, job] of jobs) {
+    // Batch-child file entries (registered in processChildTrack) have no
+    // .status — they're "ready to serve" the moment they exist, so age alone
+    // decides. Top-level jobs (single-track or batch) only once settled.
+    const settled = job.status == null || job.status === 'done' || job.status === 'error';
+    if (!settled) continue;
+    const age = now - (job.createdAt || 0);
+    if (age < JOB_TTL_MS) continue;
+
+    if (job.file && fs.existsSync(job.file)) {
+      try {
+        fs.rmSync(job.file, { force: true });
+      } catch (err) {
+        console.warn(`[cleanup] failed to remove ${job.file}:`, err.message);
+      }
+    }
+    jobs.delete(id);
+    removed++;
+  }
+  if (removed) {
+    console.log(`[cleanup] removed ${removed} stale job(s)/file(s) (rss ${Math.round(process.memoryUsage().rss / 1e6)}MB)`);
+  }
+}
+
+setInterval(sweepOldJobs, SWEEP_INTERVAL_MS).unref();
+
 // Run downloads one at a time — each spawns yt-dlp/ffmpeg/node child
 // processes, and this host's memory budget is too small to run several
 // of those pipelines concurrently without risking an OOM kill.
@@ -320,6 +358,7 @@ async function processChildTrack(job, child, raw) {
       ext: result.ext,
       title: child.title,
       artist: child.artist,
+      createdAt: Date.now(),
     });
 
     child.fileJobId = fileJobId;
@@ -382,8 +421,19 @@ app.get('/api/file/:id', (req, res) => {
   }
   const base = [job.artist, job.title].filter(Boolean).join(' - ') || job.id;
   const ext = job.ext || 'mp3';
+  const filePath = job.file;
   res.setHeader('Content-Type', ext === 'm4a' ? 'audio/mp4' : 'audio/mpeg');
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(base)}.${ext}`);
+  // The phone copies this into its own storage right away — no reason to
+  // keep our copy around. Only on a fully successful send ('finish'), not on
+  // a dropped connection, so a flaky network can still retry against the
+  // same job before the periodic sweep would otherwise catch it.
+  res.on('finish', () => {
+    fs.rm(filePath, { force: true }, (err) => {
+      if (err) console.warn(`[file] failed to remove ${filePath}:`, err.message);
+    });
+    job.file = null;
+  });
   fs.createReadStream(job.file).pipe(res);
 });
 
