@@ -8,7 +8,7 @@
     "setup": "node scripts/setup.mjs",
     "postinstall": "node scripts/setup.mjs",
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --env-file-if-exists=.env --watch src/index.js"
   },
   "dependencies": {
     "express": "^4.21.2",

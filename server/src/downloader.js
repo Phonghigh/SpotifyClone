@@ -31,6 +31,33 @@ if (process.env.YTDLP_COOKIES_CONTENT && !fs.existsSync(COOKIES_FILE)) {
     .replace(/^"|"$/g, '')
     .replace(/\\n/g, '\n');
   fs.writeFileSync(COOKIES_FILE, content);
+  console.log(`[cookies] wrote ${COOKIES_FILE} from YTDLP_COOKIES_CONTENT (${content.length} bytes)`);
+}
+logCookieStatus();
+
+/** Log (once, at startup) whether we have a usable cookies file and what's in it — names only, never values. */
+function logCookieStatus() {
+  if (!fs.existsSync(COOKIES_FILE)) {
+    console.log(
+      process.env.YTDLP_COOKIES_FROM_BROWSER
+        ? `[cookies] no file at ${COOKIES_FILE}; will use --cookies-from-browser=${process.env.YTDLP_COOKIES_FROM_BROWSER}`
+        : `[cookies] no cookies file and no YTDLP_COOKIES_FROM_BROWSER set — yt-dlp will run unauthenticated`,
+    );
+    return;
+  }
+  const text = fs.readFileSync(COOKIES_FILE, 'utf8');
+  const lines = text.split('\n').filter((l) => l && !l.startsWith('#'));
+  const names = lines.map((l) => l.split('\t')[5]).filter(Boolean);
+  const AUTH_COOKIES = ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'LOGIN_INFO', '__Secure-1PSID', '__Secure-3PSID'];
+  const hasAuth = names.some((n) => AUTH_COOKIES.includes(n));
+  console.log(`[cookies] using ${COOKIES_FILE}: ${lines.length} cookie(s) — ${names.join(', ') || '(none parsed)'}`);
+  if (!hasAuth) {
+    console.warn(
+      '[cookies] WARNING: no logged-in session cookie found (e.g. SID/LOGIN_INFO/SAPISID). ' +
+        'This cookies.txt looks like an anonymous/guest session — export it again while ' +
+        'actually signed into a Google account on youtube.com, or the bot-check will keep failing.',
+    );
+  }
 }
 
 function cookieArgs() {
