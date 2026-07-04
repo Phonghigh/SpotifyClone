@@ -75,6 +75,18 @@ function cookieArgs() {
 const JS_RUNTIME_ARGS = ['--js-runtimes', 'node'];
 
 /**
+ * Some videos are blocked by YouTube's bot-check specifically for this
+ * host's (datacenter) IP even with valid cookies — cookies alone don't fix
+ * an IP-reputation block. Routing through a proxy (residential/rotating,
+ * from any provider) makes requests look like they come from a normal
+ * consumer IP instead. Set YTDLP_PROXY to the provider's proxy URL, e.g.
+ * "http://user:pass@host:port".
+ */
+function proxyArgs() {
+  return process.env.YTDLP_PROXY ? ['--proxy', process.env.YTDLP_PROXY] : [];
+}
+
+/**
  * Output format presets. All start from the BEST available audio stream.
  * - mp3:     LAME V0 VBR (~245 kbps) — universal, great quality. Default.
  * - mp3-320: MP3 320 kbps CBR — biggest MP3 (note: source is usually <=160k).
@@ -242,6 +254,7 @@ export async function getInfoAndProbe(target) {
     const { stdout } = await ytdlp([
       ...cookieArgs(),
       ...JS_RUNTIME_ARGS,
+      ...proxyArgs(),
       '-f',
       'bestaudio/best',
       '--no-playlist',
@@ -280,6 +293,7 @@ export async function downloadAudio({ target, jobId, format = 'mp3', onProgress 
       ...cfg.args,
       ...cookieArgs(),
       ...JS_RUNTIME_ARGS,
+      ...proxyArgs(),
       '--no-playlist',
       '--no-warnings',
       '--newline',
