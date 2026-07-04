@@ -43,10 +43,10 @@ yarn-error.*
 .claude/
 .git/
 
-# local env / secrets
+# local env / secrets — EAS Build reads env vars from `eas env:create`, not
+# from an uploaded .env file, so this is safe (and desired) to exclude
 .env
 .env*.local
-src/config.local.ts
 
 # typescript
 *.tsbuildinfo

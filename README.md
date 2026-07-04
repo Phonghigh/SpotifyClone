@@ -63,16 +63,20 @@ The repo root has a ready-to-use `render.yaml` blueprint:
 ### Configure the app to use your server
 
 The app needs a matching server URL and API key. These live in
-[`src/config.ts`](src/config.ts), which reads the real values from
-`src/config.local.ts` — a **gitignored** file that's never committed.
+[`src/config.ts`](src/config.ts), which reads them from `EXPO_PUBLIC_*` env
+vars — Expo inlines any `EXPO_PUBLIC_*` var into the JS bundle at build time.
 
-1. Copy the template: `cp src/config.local.example.ts src/config.local.ts`
-   (Windows: `copy src\config.local.example.ts src\config.local.ts`)
-2. Edit `src/config.local.ts` and set `API_KEY` to the **same value** you set
-   as the `API_KEY` env var on your server (Render or local).
+1. Copy the template: `cp .env.example .env` (Windows: `copy .env.example .env`)
+2. Edit `.env` and set `EXPO_PUBLIC_API_KEY` to the **same value** you set as
+   the `API_KEY` env var on your server (Render or local).
 3. Update `DEFAULT_SERVER_URL` in `src/config.ts` to your deployed Render URL
    (or override it at runtime under **Server settings** in the "Add from
    link" sheet — handy for pointing at a local server during dev).
+
+`.env` is gitignored, same as before — but unlike a gitignored TS module, EAS
+Build's cloud builder can also read these vars if you set them there too:
+`npx eas-cli env:create --environment preview --name EXPO_PUBLIC_API_KEY --value <key> --visibility sensitive`
+(repeat per environment/profile you build with).
 
 ### Use it from the app
 
@@ -155,7 +159,7 @@ src/
   LibraryScreen.tsx         Main screen: header, list, empty state, modal hosts
   library.ts                Import / persist / list / delete songs + remote import
   settings.ts               Persisted settings (downloader server URL)
-  config.ts                 Default server URL + API key (see config.local.ts)
+  config.ts                 Default server URL + API key (from EXPO_PUBLIC_* env vars, see .env.example)
   theme.ts / types.ts / utils.ts
   components/
     Artwork, TrackRow, EqualizerBars, MiniPlayer, FullPlayer, AddFromLink
