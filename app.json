@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Spotaclone",
+    "name": "Music F",
     "slug": "SpotifyClone",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -55,7 +55,24 @@
           ]
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "NowPlaying",
+              "label": "Music F - Now Playing",
+              "description": "Shows the currently playing song with play/pause, next and previous controls.",
+              "minWidth": "220dp",
+              "minHeight": "100dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical"
+            }
+          ]
+        }
+      ]
     ],
     "extra": {
       "eas": {

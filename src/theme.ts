@@ -51,12 +51,28 @@ export const artworkGradients: [string, string][] = [
   ['#F7971E', '#5C3A00'],
 ];
 
-/** Pick a stable gradient for a string key (e.g. track id / title). */
-export function gradientFor(key: string): [string, string] {
+function hashKey(key: string): number {
   let hash = 0;
   for (let i = 0; i < key.length; i++) {
     hash = (hash * 31 + key.charCodeAt(i)) | 0;
   }
-  const index = Math.abs(hash) % artworkGradients.length;
+  return Math.abs(hash);
+}
+
+/** Pick a stable gradient for a string key (e.g. track id / title). */
+export function gradientFor(key: string): [string, string] {
+  const index = hashKey(key) % artworkGradients.length;
   return artworkGradients[index];
+}
+
+/**
+ * A richer 3-stop wash for full-bleed backgrounds (e.g. the full-screen
+ * player) — blends the track's gradient pair with a second nearby gradient
+ * so the background reads as a gradient field rather than a flat pair.
+ */
+export function gradientWashFor(key: string): [string, string, string] {
+  const index = hashKey(key) % artworkGradients.length;
+  const [from] = artworkGradients[index];
+  const [, mid] = artworkGradients[(index + 1) % artworkGradients.length];
+  return [from, mid, colors.background];
 }

@@ -69,6 +69,21 @@ export function formatBytes(bytes?: number | null): string {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1e3)} KB`;
 }
 
+/** Downsample a peaks array (or a slice of one) to a fixed bar count, taking
+ * the max value per bucket so transient loud moments aren't smoothed away. */
+export function resamplePeaks(peaks: number[], count: number): number[] {
+  if (peaks.length === 0) return [];
+  const out = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const start = Math.floor((i / count) * peaks.length);
+    const end = Math.max(start + 1, Math.floor(((i + 1) / count) * peaks.length));
+    let max = 0;
+    for (let j = start; j < end; j++) max = Math.max(max, peaks[j]);
+    out[i] = max;
+  }
+  return out;
+}
+
 /** Fisher–Yates shuffle returning a new array. */
 export function shuffled<T>(input: T[]): T[] {
   const arr = [...input];

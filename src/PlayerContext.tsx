@@ -21,7 +21,9 @@ import {
   loadLibrary,
 } from './library';
 import { getPlaybackState, setPlaybackState } from './settings';
+import { setManualGenre } from './trackMetadata';
 import { shuffled } from './utils';
+import { pushNowPlayingWidgetUpdate } from './widget/updateWidget';
 
 /** A playback context: the ordered tracks a queue is built from. */
 export type PlayContext = {
@@ -36,6 +38,7 @@ type PlayerContextValue = {
   addSongs: () => Promise<{ added: number; skipped: number }>;
   removeTrack: (id: string) => void;
   reloadLibrary: () => void;
+  setTrackGenre: (id: string, genre: string) => void;
 
   // Now playing
   currentTrack: Track | null;
@@ -467,6 +470,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     [player, setQueue],
   );
 
+  const setTrackGenre = useCallback((id: string, genre: string) => {
+    const track = tracksRef.current.find((t) => t.id === id);
+    if (!track) return;
+    setManualGenre(track.fileName, track.uri, genre);
+    const trimmed = genre.trim();
+    setTracks((prev) => {
+      const next = prev.map((t) =>
+        t.id === id ? { ...t, genre: trimmed || undefined } : t,
+      );
+      tracksRef.current = next;
+      return next;
+    });
+  }, []);
+
   // Auto-advance when a track finishes.
   useEffect(() => {
     if (status?.didJustFinish) advance(true);
@@ -476,6 +493,20 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     () => tracks.find((t) => t.id === currentId) ?? null,
     [tracks, currentId],
   );
+
+  // Keep the real home-screen widget (if the user added one) in sync.
+  useEffect(() => {
+    pushNowPlayingWidgetUpdate(
+      currentTrack
+        ? {
+            trackId: currentTrack.id,
+            title: currentTrack.title,
+            artist: currentTrack.artist,
+            isPlaying: status?.playing ?? false,
+          }
+        : null,
+    );
+  }, [currentTrack, status?.playing]);
 
   const queue = useMemo(() => {
     const byId = new Map(tracks.map((t) => [t.id, t]));
@@ -496,6 +527,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       addSongs,
       removeTrack,
       reloadLibrary,
+      setTrackGenre,
       currentTrack,
       isPlaying: status?.playing ?? false,
       isBuffering: status?.isBuffering ?? false,
@@ -526,6 +558,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       addSongs,
       removeTrack,
       reloadLibrary,
+      setTrackGenre,
       currentTrack,
       status?.playing,
       status?.isBuffering,

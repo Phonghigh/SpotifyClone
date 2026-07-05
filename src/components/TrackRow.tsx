@@ -15,17 +15,38 @@ type Props = {
   isPlaying: boolean;
   onPress: () => void;
   onMore: () => void;
+  onLongPress?: () => void;
+  /** Bulk-select mode (Library screen): shows a checkbox instead of the
+   * "more" button, and onPress toggles selection instead of playing. */
+  selectionMode?: boolean;
+  selected?: boolean;
 };
 
-function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onMore }: Props) {
+function TrackRowComponent({
+  track,
+  isCurrent,
+  isPlaying,
+  onPress,
+  onMore,
+  onLongPress,
+  selectionMode,
+  selected,
+}: Props) {
   return (
     <PressableScale
       onPress={onPress}
+      onLongPress={onLongPress}
       scaleTo={0.985}
       android_ripple={{ color: colors.surfaceHighlight }}
       style={[styles.row, isCurrent && styles.rowCurrent]}
     >
-      <Artwork trackKey={track.id} size={52} />
+      {selectionMode ? (
+        <View style={[styles.checkbox, selected && styles.checkboxChecked]}>
+          {selected ? <Ionicons name="checkmark" size={14} color={colors.black} /> : null}
+        </View>
+      ) : (
+        <Artwork trackKey={track.id} size={52} uri={track.artworkUri} />
+      )}
 
       <View style={styles.meta}>
         <Text
@@ -39,15 +60,17 @@ function TrackRowComponent({ track, isCurrent, isPlaying, onPress, onMore }: Pro
         </Text>
       </View>
 
-      {isCurrent ? (
+      {!selectionMode && isCurrent ? (
         <View style={styles.indicator}>
           <EqualizerBars playing={isPlaying} />
         </View>
       ) : null}
 
-      <Pressable hitSlop={10} onPress={onMore} style={styles.moreBtn}>
-        <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
-      </Pressable>
+      {selectionMode ? null : (
+        <Pressable hitSlop={10} onPress={onMore} style={styles.moreBtn}>
+          <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
+        </Pressable>
+      )}
     </PressableScale>
   );
 }
@@ -88,5 +111,18 @@ const styles = StyleSheet.create({
   },
   moreBtn: {
     padding: spacing.xs,
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.textSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
 });

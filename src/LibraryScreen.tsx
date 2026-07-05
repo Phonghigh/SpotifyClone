@@ -6,12 +6,12 @@ import {
   FlatList,
   Platform,
   Pressable,
-  StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, spacing } from './theme';
 import { usePlayer } from './PlayerContext';
@@ -23,6 +23,7 @@ import { PressableScale } from './components/PressableScale';
 import { MiniPlayer } from './components/MiniPlayer';
 import { FullPlayer } from './components/FullPlayer';
 import { AddFromLink } from './components/AddFromLink';
+import { SearchScreen } from './components/SearchScreen';
 import { DownloadsSheet } from './components/DownloadsSheet';
 import { ClipboardBanner } from './components/ClipboardBanner';
 import { SegmentedTabs } from './components/SegmentedTabs';
@@ -30,12 +31,16 @@ import { PlaylistsView } from './components/PlaylistsView';
 import { PlaylistDetail } from './components/PlaylistDetail';
 import { TrackActionsSheet } from './components/TrackActionsSheet';
 import { AddToPlaylistSheet } from './components/AddToPlaylistSheet';
+import { SelectionBar } from './components/SelectionBar';
+import { FormatPickerSheet } from './components/FormatPickerSheet';
+import { toast } from './components/Toast';
+import { searchQueryFor } from './downloaderClient';
 import { useClipboardLinkDetect } from './hooks/useClipboardLinkDetect';
 import { useDeepLinkIntake } from './hooks/useDeepLinkIntake';
+import { useWidgetDeepLinks } from './hooks/useWidgetDeepLinks';
 import { ShareIntentIntake, shareIntentAvailable } from './hooks/ShareIntentIntake';
 import { setLastOfferedClipboardUrl } from './settings';
-
-const TOP_INSET = Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 56;
+import type { DownloadFormat } from './settings';
 
 type Tab = 'songs' | 'playlists';
 
@@ -54,22 +59,29 @@ export function LibraryScreen() {
     isImporting,
     playTrack,
     addSongs,
+    removeTrack,
   } = usePlayer();
   const { playlists, removeTrack: removeFromPlaylist } = usePlaylists();
-  const { activeCount, enqueue } = useDownloadQueue();
+  const { activeCount, enqueue, changeFormat } = useDownloadQueue();
+  const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<Tab>('songs');
   const [openPlaylistId, setOpenPlaylistId] = useState<string | null>(null);
   const [playerOpen, setPlayerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [actionsTrack, setActionsTrack] = useState<Track | null>(null);
   const [actionsFromPlaylist, setActionsFromPlaylist] = useState<string | null>(null);
   const [playlistPickTrack, setPlaylistPickTrack] = useState<Track | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkFormatOpen, setBulkFormatOpen] = useState(false);
 
   // Link intake: clipboard banner (confirm), deep link + share sheet (direct).
   const { offer: clipboardOffer, dismiss: dismissClipboard } = useClipboardLinkDetect();
   useDeepLinkIntake(enqueue);
+  useWidgetDeepLinks();
 
   const acceptClipboard = useCallback(() => {
     if (clipboardOffer) {
@@ -92,17 +104,90 @@ export function LibraryScreen() {
     setActionsTrack(track);
   }, []);
 
+  const enterSelectionMode = useCallback((id?: string) => {
+    setSelectionMode(true);
+    setSelectedIds(id ? new Set([id]) : new Set());
+  }, []);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds((prev) =>
+      prev.size === tracks.length ? new Set() : new Set(tracks.map((t) => t.id)),
+    );
+  }, [tracks]);
+
+  const bulkRemove = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    Alert.alert(
+      `Remove ${ids.length} song${ids.length === 1 ? '' : 's'}?`,
+      'This deletes the selected songs from this phone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            ids.forEach((id) => removeTrack(id));
+            exitSelectionMode();
+            toast(`Removed ${ids.length} song${ids.length === 1 ? '' : 's'}`, 'success');
+          },
+        },
+      ],
+    );
+  }, [selectedIds, removeTrack, exitSelectionMode]);
+
+  const bulkChangeFormat = useCallback(
+    (format: DownloadFormat) => {
+      const selected = tracks.filter((t) => selectedIds.has(t.id));
+      selected.forEach((t) => {
+        // No saved link (downloaded before sourceUrl persistence, or a local
+        // import) — search for it automatically instead of skipping it.
+        const sourceUrl = t.sourceUrl ?? searchQueryFor(t.title, t.artist);
+        changeFormat({ ...t, sourceUrl }, format);
+      });
+      setBulkFormatOpen(false);
+      exitSelectionMode();
+    },
+    [tracks, selectedIds, changeFormat, exitSelectionMode],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: Track }) => (
       <TrackRow
         track={item}
         isCurrent={item.id === currentTrack?.id}
         isPlaying={isPlaying && item.id === currentTrack?.id}
-        onPress={() => playTrack(item.id)}
+        onPress={() => (selectionMode ? toggleSelect(item.id) : playTrack(item.id))}
         onMore={() => openTrackActions(item)}
+        onLongPress={() => (selectionMode ? toggleSelect(item.id) : enterSelectionMode(item.id))}
+        selectionMode={selectionMode}
+        selected={selectedIds.has(item.id)}
       />
     ),
-    [currentTrack?.id, isPlaying, playTrack, openTrackActions],
+    [
+      currentTrack?.id,
+      isPlaying,
+      playTrack,
+      openTrackActions,
+      selectionMode,
+      selectedIds,
+      toggleSelect,
+      enterSelectionMode,
+    ],
   );
 
   const openPlaylist = playlists.find((p) => p.id === openPlaylistId);
@@ -111,47 +196,84 @@ export function LibraryScreen() {
   return (
     <View style={styles.root}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: TOP_INSET + spacing.md }]}>
-        <View style={styles.headerLeft}>
-          <View style={styles.logo}>
-            <Ionicons name="musical-note" size={20} color={colors.black} />
-          </View>
-          <View>
-            <Text style={styles.greeting}>{greeting()}</Text>
-            <Text style={styles.headerTitle}>Your Library</Text>
-          </View>
-        </View>
-
-        <View style={styles.headerActions}>
-          <PressableScale onPress={() => setDownloadsOpen(true)} style={styles.iconBtn} hitSlop={8}>
-            <Ionicons name="cloud-download-outline" size={20} color={colors.text} />
-            {activeCount > 0 ? (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>{activeCount}</Text>
+      <View style={{ paddingTop: insets.top + spacing.md }}>
+        {selectionMode ? (
+          <SelectionBar
+            count={selectedIds.size}
+            allSelected={tracks.length > 0 && selectedIds.size === tracks.length}
+            onCancel={exitSelectionMode}
+            onToggleSelectAll={toggleSelectAll}
+            onChangeFormat={() => setBulkFormatOpen(true)}
+            onRemove={bulkRemove}
+          />
+        ) : (
+          <View style={styles.header}>
+            {/* Brand row */}
+            <View style={styles.brandRow}>
+              <View style={styles.logo}>
+                <Ionicons name="musical-note" size={20} color={colors.black} />
               </View>
-            ) : null}
-          </PressableScale>
+              <View style={styles.brandText}>
+                <Text style={styles.wordmark}>MUSIC F</Text>
+                <Text style={styles.greeting}>{greeting()}</Text>
+              </View>
+              <Text style={styles.headerTitle}>Your Library</Text>
+            </View>
 
-          <PressableScale onPress={() => setLinkOpen(true)} style={styles.iconBtn} hitSlop={8}>
-            <Ionicons name="link" size={20} color={colors.text} />
-          </PressableScale>
+            {/* Action bar: search pill + select + download + add */}
+            <View style={styles.actionBar}>
+              <PressableScale
+                onPress={() => setSearchOpen(true)}
+                style={styles.searchPill}
+                hitSlop={4}
+              >
+                <Ionicons name="search" size={18} color={colors.textSecondary} />
+                <Text style={styles.searchPillText} numberOfLines={1}>
+                  Search your library
+                </Text>
+              </PressableScale>
 
-          <PressableScale
-            onPress={handleAdd}
-            disabled={isImporting}
-            style={styles.addBtn}
-            hitSlop={8}
-          >
-            {isImporting ? (
-              <ActivityIndicator color={colors.black} size="small" />
-            ) : (
-              <>
-                <Ionicons name="add" size={20} color={colors.black} />
-                <Text style={styles.addBtnText}>Add</Text>
-              </>
-            )}
-          </PressableScale>
-        </View>
+              {tracks.length > 0 ? (
+                <PressableScale
+                  onPress={() => enterSelectionMode()}
+                  style={styles.iconBtn}
+                  hitSlop={8}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={20} color={colors.text} />
+                </PressableScale>
+              ) : null}
+
+              <PressableScale onPress={() => setDownloadsOpen(true)} style={styles.iconBtn} hitSlop={8}>
+                <Ionicons name="cloud-download-outline" size={20} color={colors.text} />
+                {activeCount > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{activeCount}</Text>
+                  </View>
+                ) : null}
+              </PressableScale>
+
+              <PressableScale onPress={() => setLinkOpen(true)} style={styles.iconBtn} hitSlop={8}>
+                <Ionicons name="link" size={20} color={colors.text} />
+              </PressableScale>
+
+              <PressableScale
+                onPress={handleAdd}
+                disabled={isImporting}
+                style={styles.addBtn}
+                hitSlop={8}
+              >
+                {isImporting ? (
+                  <ActivityIndicator color={colors.black} size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="add" size={20} color={colors.black} />
+                    <Text style={styles.addBtnText}>Add</Text>
+                  </>
+                )}
+              </PressableScale>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Body: playlist drill-down or tabbed views */}
@@ -200,6 +322,21 @@ export function LibraryScreen() {
       ) : null}
 
       <FullPlayer visible={playerOpen} onClose={() => setPlayerOpen(false)} />
+      <SearchScreen
+        visible={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        tracks={tracks}
+        currentTrackId={currentTrack?.id}
+        isPlaying={isPlaying}
+        onTrackPress={(t) => {
+          playTrack(t.id);
+          setSearchOpen(false);
+        }}
+        onTrackMore={(t) => {
+          setSearchOpen(false);
+          openTrackActions(t);
+        }}
+      />
       <AddFromLink visible={linkOpen} onClose={() => setLinkOpen(false)} />
       <DownloadsSheet visible={downloadsOpen} onClose={() => setDownloadsOpen(false)} />
       <TrackActionsSheet
@@ -219,6 +356,12 @@ export function LibraryScreen() {
       <AddToPlaylistSheet
         track={playlistPickTrack}
         onClose={() => setPlaylistPickTrack(null)}
+      />
+      <FormatPickerSheet
+        visible={bulkFormatOpen}
+        onClose={() => setBulkFormatOpen(false)}
+        title="Change format"
+        onPick={bulkChangeFormat}
       />
 
       {clipboardOffer ? (
@@ -276,15 +419,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
   },
-  headerLeft: {
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  brandText: {
     flex: 1,
   },
   logo: {
@@ -296,6 +438,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: spacing.md,
   },
+  wordmark: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 1,
+  },
   greeting: {
     color: colors.textSecondary,
     fontSize: 12,
@@ -305,9 +454,26 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
   },
-  headerActions: {
+  actionBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: spacing.md,
+  },
+  searchPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surfaceHighlight,
+    paddingHorizontal: spacing.md,
+    marginRight: spacing.sm,
+  },
+  searchPillText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    marginLeft: spacing.sm,
+    flex: 1,
   },
   iconBtn: {
     width: 40,

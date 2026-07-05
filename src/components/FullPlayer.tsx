@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
+  Image,
   LayoutChangeEvent,
   Modal,
   NativeScrollEvent,
@@ -17,7 +18,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 
-import { colors, gradientFor, spacing } from '../theme';
+import { colors, gradientFor, gradientWashFor, spacing } from '../theme';
 import { glass } from '../liquid-theme';
 import { usePlayer } from '../PlayerContext';
 import { formatTime } from '../utils';
@@ -25,6 +26,7 @@ import { UpNextSheet } from './UpNextSheet';
 import { LiquidGlass } from './LiquidGlass';
 import { LyricsView } from './LyricsView';
 import { ContourView } from './ContourView';
+import { BarGridVisualizer } from './BarGridVisualizer';
 
 type Props = {
   visible: boolean;
@@ -33,7 +35,7 @@ type Props = {
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const ART_SIZE = Math.min(SCREEN_W - 96, SCREEN_H * 0.36);
-const PAGES = ['art', 'lyrics', 'contour'] as const;
+const PAGES = ['art', 'lyrics', 'contour', 'visualizer'] as const;
 
 export function FullPlayer({ visible, onClose }: Props) {
   const {
@@ -62,6 +64,10 @@ export function FullPlayer({ visible, onClose }: Props) {
   const [mounted, setMounted] = useState(visible);
   const translateY = useRef(new Animated.Value(SCREEN_H)).current;
   const artScale = useRef(new Animated.Value(0.9)).current;
+  const playBtnScale = useRef(new Animated.Value(1)).current;
+  const pulseScale = useRef(new Animated.Value(1)).current;
+  const pulseOpacity = useRef(new Animated.Value(0)).current;
+  const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     if (visible) {
@@ -96,9 +102,38 @@ export function FullPlayer({ visible, onClose }: Props) {
     setSeeking(false);
   }, [currentTrack?.id]);
 
+  // Play/pause micro-bounce + a soft pulsing ring behind the button while playing.
+  useEffect(() => {
+    playBtnScale.setValue(0.85);
+    Animated.spring(playBtnScale, {
+      toValue: 1,
+      damping: glass.spring.damping,
+      stiffness: glass.spring.stiffness,
+      mass: glass.spring.mass,
+      useNativeDriver: true,
+    }).start();
+
+    pulseLoop.current?.stop();
+    if (isPlaying) {
+      pulseScale.setValue(1);
+      pulseOpacity.setValue(0.35);
+      pulseLoop.current = Animated.loop(
+        Animated.parallel([
+          Animated.timing(pulseScale, { toValue: 1.35, duration: 1400, useNativeDriver: true }),
+          Animated.timing(pulseOpacity, { toValue: 0, duration: 1400, useNativeDriver: true }),
+        ]),
+      );
+      pulseLoop.current.start();
+    } else {
+      pulseOpacity.setValue(0);
+    }
+    return () => pulseLoop.current?.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying]);
+
   if (!currentTrack || !mounted) return null;
 
-  const [gradientTop] = gradientFor(currentTrack.id);
+  const wash = gradientWashFor(currentTrack.id);
   const sliderMax = duration > 0 ? duration : 1;
   const sliderValue = seeking ? seekValue : Math.min(position, sliderMax);
 
@@ -114,8 +149,8 @@ export function FullPlayer({ visible, onClose }: Props) {
     <Modal visible={mounted} animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <Animated.View style={[styles.root, { transform: [{ translateY }] }]}>
         <LinearGradient
-          colors={[gradientTop, colors.background, colors.background]}
-          locations={[0, 0.55, 1]}
+          colors={wash}
+          locations={[0, 0.5, 1]}
           style={StyleSheet.absoluteFill}
         />
 
@@ -149,18 +184,26 @@ export function FullPlayer({ visible, onClose }: Props) {
             <View style={styles.page}>
               <View style={styles.artWrap}>
                 <Animated.View style={{ transform: [{ scale: artScale }] }}>
-                  <LinearGradient
-                    colors={gradientFor(currentTrack.id)}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.art}
-                  >
-                    <Ionicons
-                      name="musical-notes"
-                      size={ART_SIZE * 0.32}
-                      color="rgba(255,255,255,0.92)"
+                  {currentTrack.artworkUri ? (
+                    <Image
+                      source={{ uri: currentTrack.artworkUri }}
+                      resizeMode="cover"
+                      style={styles.art}
                     />
-                  </LinearGradient>
+                  ) : (
+                    <LinearGradient
+                      colors={gradientFor(currentTrack.id)}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.art}
+                    >
+                      <Ionicons
+                        name="musical-notes"
+                        size={ART_SIZE * 0.32}
+                        color="rgba(255,255,255,0.92)"
+                      />
+                    </LinearGradient>
+                  )}
                 </Animated.View>
               </View>
             </View>
@@ -184,6 +227,16 @@ export function FullPlayer({ visible, onClose }: Props) {
                 onSeek={seekTo}
               />
             </View>
+
+            {/* Page 4 — bar-grid visualizer */}
+            <View style={styles.page}>
+              <BarGridVisualizer
+                track={currentTrack}
+                position={position}
+                duration={duration}
+                isPlaying={isPlaying}
+              />
+            </View>
           </ScrollView>
 
           {/* Page dots */}
@@ -194,7 +247,15 @@ export function FullPlayer({ visible, onClose }: Props) {
           </View>
 
           {/* Bottom control sheet — Liquid Glass over the gradient backdrop */}
-          <LiquidGlass radius={glass.radius.lg} style={styles.controlsSheet} intensity={35}>
+          <View style={styles.controlsSheetWrap}>
+            <LinearGradient
+              colors={[glass.specularStart, glass.specularEnd]}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={styles.controlsRim}
+              pointerEvents="none"
+            />
+            <LiquidGlass radius={glass.radius.lg} style={styles.controlsSheet} intensity={35}>
           {/* Title + artist */}
           <View style={styles.infoRow}>
             <View style={styles.infoText}>
@@ -242,14 +303,25 @@ export function FullPlayer({ visible, onClose }: Props) {
               <Ionicons name="play-skip-back" size={36} color={colors.text} />
             </Pressable>
 
-            <Pressable onPress={togglePlay} style={styles.playBtn}>
-              <Ionicons
-                name={isPlaying ? 'pause' : 'play'}
-                size={36}
-                color={colors.black}
-                style={isPlaying ? undefined : { marginLeft: 4 }}
+            <View style={styles.playBtnWrap}>
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.pulseRing,
+                  { opacity: pulseOpacity, transform: [{ scale: pulseScale }] },
+                ]}
               />
-            </Pressable>
+              <Pressable onPress={togglePlay}>
+                <Animated.View style={[styles.playBtn, { transform: [{ scale: playBtnScale }] }]}>
+                  <Ionicons
+                    name={isPlaying ? 'pause' : 'play'}
+                    size={36}
+                    color={colors.black}
+                    style={isPlaying ? undefined : { marginLeft: 4 }}
+                  />
+                </Animated.View>
+              </Pressable>
+            </View>
 
             <Pressable hitSlop={10} onPress={playNext}>
               <Ionicons name="play-skip-forward" size={36} color={colors.text} />
@@ -263,7 +335,8 @@ export function FullPlayer({ visible, onClose }: Props) {
               />
             </Pressable>
           </View>
-          </LiquidGlass>
+            </LiquidGlass>
+          </View>
         </View>
 
         <UpNextSheet visible={queueOpen} onClose={() => setQueueOpen(false)} />
@@ -287,6 +360,20 @@ type SeekBarProps = {
 function SeekBar({ value, maximumValue, onValueChange, onSlidingComplete }: SeekBarProps) {
   const widthRef = useRef(0);
   const isScrubbing = useRef(false);
+  const [scrubbing, setScrubbing] = useState(false);
+  const thumbScale = useRef(new Animated.Value(1)).current;
+
+  const setScrubbingState = (active: boolean) => {
+    isScrubbing.current = active;
+    setScrubbing(active);
+    Animated.spring(thumbScale, {
+      toValue: active ? 1.6 : 1,
+      damping: 14,
+      stiffness: 220,
+      mass: 1,
+      useNativeDriver: true,
+    }).start();
+  };
 
   const pan = useRef(
     PanResponder.create({
@@ -294,7 +381,7 @@ function SeekBar({ value, maximumValue, onValueChange, onSlidingComplete }: Seek
       onMoveShouldSetPanResponder: () => true,
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (evt) => {
-        isScrubbing.current = true;
+        setScrubbingState(true);
         const frac = Math.min(Math.max(evt.nativeEvent.locationX / (widthRef.current || 1), 0), 1);
         onValueChange(frac * maximumValue);
       },
@@ -305,10 +392,10 @@ function SeekBar({ value, maximumValue, onValueChange, onSlidingComplete }: Seek
       onPanResponderRelease: (evt) => {
         const frac = Math.min(Math.max(evt.nativeEvent.locationX / (widthRef.current || 1), 0), 1);
         onSlidingComplete(frac * maximumValue);
-        isScrubbing.current = false;
+        setScrubbingState(false);
       },
       onPanResponderTerminate: () => {
-        isScrubbing.current = false;
+        setScrubbingState(false);
       },
     }),
   ).current;
@@ -321,11 +408,17 @@ function SeekBar({ value, maximumValue, onValueChange, onSlidingComplete }: Seek
 
   return (
     <View style={seekStyles.root} onLayout={onLayout} {...pan.panHandlers}>
+      {scrubbing ? <View style={[seekStyles.glow, { width: `${frac * 100}%` as any }]} /> : null}
       <View style={seekStyles.track}>
         <View style={[seekStyles.filled, { flex: frac }]} />
         <View style={[seekStyles.unfilled, { flex: 1 - frac }]} />
       </View>
-      <View style={[seekStyles.thumb, { left: `${frac * 100}%` as any }]} />
+      <Animated.View
+        style={[
+          seekStyles.thumb,
+          { left: `${frac * 100}%` as any, transform: [{ scale: thumbScale }] },
+        ]}
+      />
     </View>
   );
 }
@@ -349,6 +442,21 @@ const seekStyles = StyleSheet.create({
   unfilled: {
     backgroundColor: 'rgba(255,255,255,0.3)',
     borderRadius: 2,
+  },
+  glow: {
+    position: 'absolute',
+    top: '50%' as any,
+    left: 0,
+    height: 8,
+    marginTop: -4,
+    borderRadius: 4,
+    backgroundColor: colors.primary,
+    opacity: 0.55,
+    shadowColor: colors.primary,
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 6,
   },
   thumb: {
     position: 'absolute',
@@ -431,9 +539,20 @@ const styles = StyleSheet.create({
   dotActive: {
     backgroundColor: colors.text,
   },
-  controlsSheet: {
+  controlsSheetWrap: {
     marginHorizontal: spacing.md,
     marginTop: spacing.md,
+  },
+  controlsRim: {
+    position: 'absolute',
+    top: -24,
+    left: 12,
+    right: 12,
+    height: 48,
+    borderTopLeftRadius: glass.radius.lg + 12,
+    borderTopRightRadius: glass.radius.lg + 12,
+  },
+  controlsSheet: {
     paddingBottom: spacing.lg,
     backgroundColor: 'rgba(18,18,18,0.35)',
   },
@@ -478,6 +597,19 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     paddingHorizontal: spacing.xl,
   },
+  playBtnWrap: {
+    width: 64,
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: colors.primary,
+  },
   playBtn: {
     width: 64,
     height: 64,
@@ -485,5 +617,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.text,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
   },
 });

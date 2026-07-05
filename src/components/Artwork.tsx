@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -11,15 +11,29 @@ type Props = {
   size: number;
   borderRadius?: number;
   iconRatio?: number;
+  /** Real cover image, if one was extracted for this track. Falls back to
+   * the gradient placeholder when absent. */
+  uri?: string;
 };
 
 /**
- * A colorful gradient tile standing in for album art. The gradient is derived
- * deterministically from the track key, so a song always looks the same.
+ * The track's real cover image when available; otherwise a colorful gradient
+ * tile standing in for album art, derived deterministically from the track
+ * key so a song without art always looks the same.
  */
-export function Artwork({ trackKey, size, borderRadius, iconRatio = 0.42 }: Props) {
-  const [from, to] = gradientFor(trackKey);
+export function Artwork({ trackKey, size, borderRadius, iconRatio = 0.42, uri }: Props) {
   const br = borderRadius ?? radius.md;
+  if (uri) {
+    return (
+      <Image
+        source={{ uri }}
+        resizeMode="cover"
+        style={[styles.container, { width: size, height: size, borderRadius: br }]}
+      />
+    );
+  }
+
+  const [from, to] = gradientFor(trackKey);
   return (
     <LinearGradient
       colors={[from, to]}

@@ -137,7 +137,7 @@ app.post('/api/download', downloadLimiter, (req, res) => {
     return res.status(503).json({ error: 'yt-dlp is not installed. Run "npm run setup" in the server folder.' });
   }
 
-  const format = ALLOWED_FORMATS.includes(req.body?.format) ? req.body.format : 'mp3';
+  const format = ALLOWED_FORMATS.includes(req.body?.format) ? req.body.format : 'm4a';
   const link = classifyLink(url);
   const isBatch = link.kind === 'playlist' || link.kind === 'album';
   const id = crypto.randomUUID();
@@ -169,8 +169,8 @@ app.post('/api/download', downloadLimiter, (req, res) => {
   res.status(202).json({ id, batch: isBatch });
 });
 
-const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 3000;
+const MAX_ATTEMPTS = 2;
+const RETRY_DELAY_MS = 5000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Batch tracks were being requested back-to-back with zero pause between

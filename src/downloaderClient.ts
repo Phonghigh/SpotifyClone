@@ -86,6 +86,18 @@ export async function fetchWithTimeout(
   }
 }
 
+/**
+ * Build a yt-dlp search pseudo-URL for a track with no saved source link
+ * (e.g. one downloaded before sourceUrl persistence existed). The server
+ * already resolves this exact `ytsearch1:...` shape end-to-end — it's the
+ * same mechanism used internally to resolve Spotify links to a playable
+ * YouTube source (see server/src/index.js's runJobAttempt) — so no dedicated
+ * search endpoint is needed; it can be submitted straight to /api/download.
+ */
+export function searchQueryFor(title: string, artist?: string): string {
+  return `ytsearch1:${[artist, title].filter(Boolean).join(' ')}`;
+}
+
 /** True when the text contains a link the downloader server can handle. */
 export function extractSupportedLink(text: string): string | null {
   const match = text.match(

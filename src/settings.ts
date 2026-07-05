@@ -6,7 +6,7 @@ import type { QueueSource, RepeatMode } from './types';
 const SETTINGS_FILE = 'settings.json';
 
 export type DownloadFormat = 'mp3' | 'mp3-320' | 'm4a';
-export const DEFAULT_FORMAT: DownloadFormat = 'mp3';
+export const DEFAULT_FORMAT: DownloadFormat = 'm4a';
 
 /** 'cloud' = the deployed server (DEFAULT_SERVER_URL); 'local' = a dev
  * server on your own machine, e.g. `npm run dev` in server/ on the same

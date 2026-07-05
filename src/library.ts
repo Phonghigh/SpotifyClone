@@ -1,7 +1,19 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as DocumentPicker from 'expo-document-picker';
 
+import { coverUri, extractCover } from './covers';
 import { authHeaders } from './downloaderClient';
+import { readId3Tags } from './id3';
+import {
+  forgetTrack,
+  getArt,
+  getGenre,
+  getSourceUrl,
+  isScanned,
+  recordScan,
+  recordSource,
+} from './trackMetadata';
+import type { DownloadFormat } from './settings';
 import type { Track } from './types';
 import { isAudioFileName, trackFromFile } from './utils';
 
@@ -46,6 +58,21 @@ function uniqueDestination(dir: Directory, fileName: string): File {
   return candidate;
 }
 
+/** Build a Track with its genre + cover art filled in, scanning at most once per file. */
+function trackWithGenre(file: File): Track {
+  const track = trackFromFile(file.name, file.uri);
+  const size = file.size;
+  if (!isScanned(file.name, size)) {
+    const tags = readId3Tags(file.uri);
+    const art = extractCover(file.name, file.uri);
+    recordScan(file.name, size, tags?.genre, art);
+  }
+  const genre = getGenre(file.name);
+  const artworkUri = coverUri(getArt(file.name));
+  const sourceUrl = getSourceUrl(file.name);
+  return { ...track, genre, artworkUri, sourceUrl };
+}
+
 /**
  * Read every song already imported into the app's music folder.
  * Called on launch so the library persists between sessions.
@@ -57,7 +84,7 @@ export function loadLibrary(): Track[] {
   const tracks: Track[] = [];
   for (const entry of dir.list()) {
     if (entry instanceof File && isAudioFileName(entry.name)) {
-      tracks.push(trackFromFile(entry.name, entry.uri));
+      tracks.push(trackWithGenre(entry));
     }
   }
   tracks.sort((a, b) => a.title.localeCompare(b.title));
@@ -96,7 +123,7 @@ export async function importSongs(): Promise<ImportResult> {
     try {
       const source = new File(asset.uri);
       await source.copy(dest);
-      added.push(trackFromFile(dest.name, dest.uri));
+      added.push(trackWithGenre(dest));
     } catch (err) {
       console.warn('Failed to import', sourceName, err);
       skipped += 1;
@@ -154,6 +181,10 @@ export async function importRemoteTrack(params: {
   title: string;
   artist?: string;
   ext?: string;
+  /** Original remote link (e.g. the pasted YouTube/Spotify URL), if known —
+   * persisted so a later "change format" re-download knows where to fetch from. */
+  sourceUrl?: string;
+  format?: DownloadFormat;
 }): Promise<Track> {
   const dir = ensureMusicDir();
   const artist = params.artist?.trim();
@@ -161,7 +192,10 @@ export async function importRemoteTrack(params: {
   const base = artist ? `${artist} - ${params.title}` : params.title;
   const dest = uniqueDestination(dir, `${base}.${ext}`);
   await File.downloadFileAsync(params.fileUrl, dest, { headers: authHeaders() });
-  return trackFromFile(dest.name, dest.uri);
+  if (params.sourceUrl && params.format) {
+    recordSource(dest.name, dest.size, params.sourceUrl, params.format);
+  }
+  return trackWithGenre(dest);
 }
 
 /** Permanently delete an imported song from the device. */
@@ -172,4 +206,5 @@ export function deleteTrack(track: Track): void {
   } catch (err) {
     console.warn('Failed to delete', track.fileName, err);
   }
+  forgetTrack(track.fileName);
 }

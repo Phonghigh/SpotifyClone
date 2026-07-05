@@ -36,8 +36,8 @@ type Props = {
 };
 
 const FORMAT_OPTIONS: { key: DownloadFormat; label: string; sub: string }[] = [
-  { key: 'mp3', label: 'MP3', sub: 'High · universal' },
-  { key: 'm4a', label: 'M4A', sub: 'Best fidelity' },
+  { key: 'm4a', label: 'M4A', sub: 'Best fidelity · default' },
+  { key: 'mp3', label: 'MP3', sub: 'Universal compatibility' },
   { key: 'mp3-320', label: 'MP3 320', sub: 'Max bitrate' },
 ];
 
@@ -47,7 +47,7 @@ export function AddFromLink({ visible, onClose }: Props) {
   const [url, setUrl] = useState('');
   const [mode, setMode] = useState<ServerMode>('cloud');
   const [localServer, setLocalServer] = useState('');
-  const [format, setFormat] = useState<DownloadFormat>('mp3');
+  const [format, setFormat] = useState<DownloadFormat>(getDownloadFormat());
   const [showServer, setShowServer] = useState(false);
   const [invalid, setInvalid] = useState(false);
 

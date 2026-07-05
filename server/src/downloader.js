@@ -93,16 +93,28 @@ function proxyArgs() {
  * - m4a:     keep the native AAC stream where possible — best fidelity vs the
  *            YouTube source, plays on iOS + Android.
  */
+// Embed the video's thumbnail as cover art (converted to JPEG first — mp3's
+// ID3 APIC frame and m4a's cover atom don't reliably accept YouTube's native
+// WebP thumbnails). Without this, downloaded files carry no artwork at all,
+// since the client (src/id3.ts) only ever reads art embedded in the file.
+const THUMBNAIL_ARGS = ['--embed-thumbnail', '--convert-thumbnails', 'jpg'];
+
 export const FORMATS = {
   mp3: {
     ext: 'mp3',
     label: 'MP3',
-    args: ['-f', 'bestaudio/best', '-x', '--audio-format', 'mp3', '--audio-quality', '0'],
+    args: [
+      '-f', 'bestaudio/best', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+      ...THUMBNAIL_ARGS,
+    ],
   },
   'mp3-320': {
     ext: 'mp3',
     label: 'MP3 320',
-    args: ['-f', 'bestaudio/best', '-x', '--audio-format', 'mp3', '--audio-quality', '320K'],
+    args: [
+      '-f', 'bestaudio/best', '-x', '--audio-format', 'mp3', '--audio-quality', '320K',
+      ...THUMBNAIL_ARGS,
+    ],
   },
   m4a: {
     ext: 'm4a',
@@ -115,6 +127,7 @@ export const FORMATS = {
       'm4a',
       '--audio-quality',
       '0',
+      ...THUMBNAIL_ARGS,
     ],
   },
 };

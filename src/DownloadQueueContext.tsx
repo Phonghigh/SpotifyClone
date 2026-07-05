@@ -13,6 +13,7 @@ import { File, Paths } from 'expo-file-system';
 import { usePlayer } from './PlayerContext';
 import { usePlaylists } from './PlaylistsContext';
 import { findExistingTrack, importRemoteTrack, trackFileExists } from './library';
+import type { Track } from './types';
 import { saveAnalysis } from './analysis';
 import { initNotifications, notifyDownloadComplete } from './notifications';
 import { toast } from './components/Toast';
@@ -64,6 +65,9 @@ export type DownloadItem = {
   children?: DownloadChildStatus[];
   playlistId?: string;
   failedCount?: number;
+  /** Set when this item is re-downloading an existing track in a new format —
+   * the id of the old track to delete once the new file lands successfully. */
+  replaceTrackId?: string;
 };
 
 export const ACTIVE_STATUSES: DownloadItemStatus[] = [
@@ -77,6 +81,9 @@ type QueueContextValue = {
   items: DownloadItem[];
   activeCount: number;
   enqueue: (url: string, format?: DownloadFormat) => boolean;
+  /** Re-download a track already in the library, in a different format —
+   * once the new file lands successfully, the old one is deleted. */
+  changeFormat: (track: Track, format: DownloadFormat) => boolean;
   retry: (id: string) => void;
   remove: (id: string) => void;
   clearCompleted: () => void;
@@ -128,7 +135,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let nextItemId = Date.now();
 
 export function DownloadQueueProvider({ children }: { children: React.ReactNode }) {
-  const { reloadLibrary } = usePlayer();
+  const { reloadLibrary, removeTrack } = usePlayer();
   const { create: createPlaylist, addTrack: addTrackToPlaylist } = usePlaylists();
 
   const itemsRef = useRef<DownloadItem[]>(loadPersistedQueue());
@@ -291,8 +298,13 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
               artist: job.artist ?? undefined,
             });
             // Already saved under the same "Artist - Title" name? Reuse it
-            // instead of writing a duplicate "(2)" copy.
-            const existing = job.title ? findExistingTrack(job.title, job.artist || '') : null;
+            // instead of writing a duplicate "(2)" copy. Skipped for format-change
+            // jobs — that stem match would otherwise resolve to the very track
+            // we're replacing, short-circuiting before the new file is fetched.
+            const existing =
+              !item.replaceTrackId && job.title
+                ? findExistingTrack(job.title, job.artist || '')
+                : null;
             if (existing) {
               patch(id, { status: 'done', trackId: existing.id, completedAt: Date.now() });
               toast(`Already in your library: ${existing.title}`, 'info');
@@ -303,6 +315,8 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
               title: job.title || 'Unknown title',
               artist: job.artist || '',
               ext: job.ext || 'mp3',
+              sourceUrl: item.url,
+              format: item.format,
             });
             if (job.analysis?.peaks?.length) {
               saveAnalysis(track.fileName, {
@@ -314,8 +328,18 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
             reloadLibrary();
             patch(id, { status: 'done', trackId: track.id, completedAt: Date.now() });
 
+            // The new file downloaded successfully — now it's safe to drop the
+            // old one. Doing this only after a successful import means a failed
+            // re-download never destroys the original file.
+            if (item.replaceTrackId && item.replaceTrackId !== track.id) {
+              removeTrack(item.replaceTrackId);
+            }
+
             const label = [job.artist, job.title].filter(Boolean).join(' – ') || item.url;
-            toast(`Downloaded: ${label}`, 'success');
+            toast(
+              item.replaceTrackId ? `Re-downloaded in ${item.format}: ${label}` : `Downloaded: ${label}`,
+              'success',
+            );
             notifyDownloadComplete('Download complete', label);
             return;
           }
@@ -327,7 +351,7 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
         toast(`Download failed: ${message}`, 'error');
       }
     },
-    [patch, reloadLibrary, processBatchTick],
+    [patch, reloadLibrary, removeTrack, processBatchTick],
   );
 
   /** Sequential pump: drains the queue one item at a time. */
@@ -345,8 +369,8 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
     }
   }, [processItem]);
 
-  const enqueue = useCallback(
-    (url: string, format?: DownloadFormat): boolean => {
+  const enqueueInternal = useCallback(
+    (url: string, format: DownloadFormat | undefined, extra?: Partial<DownloadItem>): boolean => {
       const trimmed = url.trim();
       if (!trimmed) return false;
       const normalized = normalizeLink(trimmed);
@@ -359,12 +383,16 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
       }
       // Same link finished before and its file is still on the device →
       // don't download it again. (Deleting the song re-enables the download.)
-      const alreadyDownloaded = itemsRef.current.find(
-        (i) =>
-          i.status === 'done' &&
-          normalizeLink(i.url) === normalized &&
-          (i.batch || (i.trackId != null && trackFileExists(i.trackId))),
-      );
+      // Skipped for format-change jobs, which intentionally re-fetch a URL
+      // that's already downloaded — just in a different format.
+      const alreadyDownloaded =
+        !extra?.replaceTrackId &&
+        itemsRef.current.find(
+          (i) =>
+            i.status === 'done' &&
+            normalizeLink(i.url) === normalized &&
+            (i.batch || (i.trackId != null && trackFileExists(i.trackId))),
+        );
       if (alreadyDownloaded) {
         toast('Already downloaded', 'info');
         return false;
@@ -379,13 +407,32 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
         addedAt: Date.now(),
         batch: kind === 'playlist' || kind === 'album',
         kind,
+        ...extra,
       };
       mutate((prev) => [...prev, item]);
-      toast('Added to download queue', 'success');
       void pump();
       return true;
     },
     [mutate, pump],
+  );
+
+  const enqueue = useCallback(
+    (url: string, format?: DownloadFormat): boolean => {
+      const ok = enqueueInternal(url, format);
+      if (ok) toast('Added to download queue', 'success');
+      return ok;
+    },
+    [enqueueInternal],
+  );
+
+  const changeFormat = useCallback(
+    (track: Track, format: DownloadFormat): boolean => {
+      if (!track.sourceUrl) return false;
+      const ok = enqueueInternal(track.sourceUrl, format, { replaceTrackId: track.id });
+      if (ok) toast(`Re-downloading in ${format}…`, 'info');
+      return ok;
+    },
+    [enqueueInternal],
   );
 
   const retry = useCallback(
@@ -424,8 +471,8 @@ export function DownloadQueueProvider({ children }: { children: React.ReactNode 
   );
 
   const value = useMemo<QueueContextValue>(
-    () => ({ items, activeCount, enqueue, retry, remove, clearCompleted }),
-    [items, activeCount, enqueue, retry, remove, clearCompleted],
+    () => ({ items, activeCount, enqueue, changeFormat, retry, remove, clearCompleted }),
+    [items, activeCount, enqueue, changeFormat, retry, remove, clearCompleted],
   );
 
   return (

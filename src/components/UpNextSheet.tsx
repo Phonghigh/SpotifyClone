@@ -44,7 +44,7 @@ export function UpNextSheet({ visible, onClose }: Props) {
           return (
             <View style={[styles.row, isPast && styles.rowPast]}>
               <Pressable style={styles.rowMain} onPress={() => jumpTo(item.id)}>
-                <Artwork trackKey={item.id} size={40} />
+                <Artwork trackKey={item.id} size={40} uri={item.artworkUri} />
                 <View style={styles.rowMeta}>
                   <Text
                     numberOfLines={1}

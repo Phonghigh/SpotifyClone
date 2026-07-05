@@ -20,7 +20,7 @@ import {
   loadAnalysis,
 } from '../analysis';
 import { EqualizerBars } from './EqualizerBars';
-import { formatTime } from '../utils';
+import { formatTime, resamplePeaks } from '../utils';
 
 type Props = {
   track: Track;
@@ -32,20 +32,6 @@ type Props = {
 const BAR_COUNT = 96;
 const WAVE_HEIGHT = 180;
 const PITCH_HEIGHT = 90;
-
-/** Downsample peaks to the number of bars we render. */
-function resample(peaks: number[], count: number): number[] {
-  if (peaks.length === 0) return [];
-  const out = new Array(count);
-  for (let i = 0; i < count; i++) {
-    const start = Math.floor((i / count) * peaks.length);
-    const end = Math.max(start + 1, Math.floor(((i + 1) / count) * peaks.length));
-    let max = 0;
-    for (let j = start; j < end; j++) max = Math.max(max, peaks[j]);
-    out[i] = max;
-  }
-  return out;
-}
 
 export function ContourView({ track, position, duration, onSeek }: Props) {
   const [analysis, setAnalysis] = useState<TrackAnalysis | null>(() =>
@@ -101,7 +87,7 @@ export function ContourView({ track, position, duration, onSeek }: Props) {
   ).current;
 
   const bars = useMemo(
-    () => (analysis ? resample(analysis.peaks, BAR_COUNT) : []),
+    () => (analysis ? resamplePeaks(analysis.peaks, BAR_COUNT) : []),
     [analysis],
   );
 

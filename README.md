@@ -1,4 +1,4 @@
-# Spotaclone 🎧
+# Music F 🎧
 
 A Spotify-style music player built with **Expo / React Native** that plays music
 files stored on your phone — and can **download songs from YouTube / Spotify
@@ -121,7 +121,7 @@ codec — so you can see exactly what you got.
 - 📋 **Clipboard auto-detect** — copy a YouTube/Spotify link anywhere, open the
   app, and a banner offers to download it (no paste needed)
 - 📤 **Share-sheet target** (dev build) — share a link straight from the
-  YouTube/Spotify app to Spotaclone via `expo-share-intent`
+  YouTube/Spotify app to Music F via `expo-share-intent`
 - 🔗 Deep link: `spotaclone://add?url=…` queues a download
 - 🎤 **Synced lyrics** (LRCLIB) — karaoke-style highlight, tap a line to seek
 - 📈 **Sound map** — server-computed waveform you can drag to seek, plus an

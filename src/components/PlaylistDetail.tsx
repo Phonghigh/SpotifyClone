@@ -137,7 +137,7 @@ export function PlaylistDetail({ playlistId, onBack, onTrackMore }: Props) {
                 style={styles.rowMain}
                 onPress={() => context && playTrack(item.id, context)}
               >
-                <Artwork trackKey={item.id} size={44} />
+                <Artwork trackKey={item.id} size={44} uri={item.artworkUri} />
                 <View style={styles.rowMeta}>
                   <Text
                     numberOfLines={1}
@@ -195,7 +195,7 @@ export function PlaylistDetail({ playlistId, onBack, onTrackMore }: Props) {
               style={({ pressed }) => [styles.pickerRow, pressed && { opacity: 0.7 }]}
               onPress={() => addTrack(playlist.id, item.id)}
             >
-              <Artwork trackKey={item.id} size={40} />
+              <Artwork trackKey={item.id} size={40} uri={item.artworkUri} />
               <View style={styles.rowMeta}>
                 <Text numberOfLines={1} style={styles.rowTitle}>
                   {item.title}
