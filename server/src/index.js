@@ -171,6 +171,15 @@ app.post('/api/download', downloadLimiter, (req, res) => {
 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 3000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Batch tracks were being requested back-to-back with zero pause between
+// them — a dozen+ yt-dlp calls to YouTube in rapid succession reads as
+// automated scraping regardless of valid cookies/proxy, and triggers bot-check
+// on nearly every track. A human pause between tracks, plus a couple of
+// retries on the (often transient) bot-check error, fixes most of these.
+const BATCH_TRACK_DELAY_MS = 4000;
+const BATCH_CHILD_MAX_ATTEMPTS = 2;
 
 /** Retries the job pipeline on transient failures (e.g. the flaky YouTube
  * bot-check seen on some videos), recording each failed try in job.attempts.
@@ -304,9 +313,11 @@ async function processBatchJob(job) {
     `[job ${job.id}] batch "${job.title}": ${job.trackCount} track(s), concurrency=${BATCH_CONCURRENCY} ${memLine()}`,
   );
 
-  await runWithConcurrency(job.children, BATCH_CONCURRENCY, (child) =>
-    processChildTrack(job, child, meta.tracks[child.index]),
-  );
+  await runWithConcurrency(job.children, BATCH_CONCURRENCY, async (child) => {
+    await processChildTrack(job, child, meta.tracks[child.index]);
+    // Pace requests to YouTube so a 20+ track album doesn't read as scraping.
+    await sleep(BATCH_TRACK_DELAY_MS);
+  });
 
   job.status = 'done';
   job.progress = 100;
@@ -321,59 +332,75 @@ function memLine() {
 }
 
 async function processChildTrack(job, child, raw) {
+  let lastErr;
+  for (let attempt = 1; attempt <= BATCH_CHILD_MAX_ATTEMPTS; attempt++) {
+    try {
+      await processChildTrackAttempt(job, child, raw);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (err?.permanent || attempt === BATCH_CHILD_MAX_ATTEMPTS) break;
+      console.warn(
+        `[job ${job.id}] track ${child.index + 1}/${job.trackCount} "${child.title}" ` +
+          `attempt ${attempt}/${BATCH_CHILD_MAX_ATTEMPTS} failed, retrying: ${err.message}`,
+      );
+      await sleep(RETRY_DELAY_MS * attempt);
+    }
+  }
+  child.status = 'error';
+  child.error = String(lastErr?.message || lastErr);
+  console.warn(`[job ${job.id}] child ${child.index} (${child.title}) failed: ${child.error} ${memLine()}`);
+}
+
+async function processChildTrackAttempt(job, child, raw) {
   child.status = 'resolving';
   console.log(`[job ${job.id}] track ${child.index + 1}/${job.trackCount} "${child.title}" start ${memLine()}`);
-  try {
-    let target;
-    let probe;
-    if (job.source === 'spotify') {
-      target = `ytsearch1:${[child.artist, child.title].filter(Boolean).join(' ')}`;
-      probe = await probeAudio(target);
-    } else {
-      target = `https://www.youtube.com/watch?v=${raw.videoId}`;
-      const combined = await getInfoAndProbe(target);
-      child.title = combined.info.title || child.title;
-      child.artist = combined.info.artist || child.artist;
-      probe = combined.probe;
-    }
 
-    child.status = 'downloading';
-    const fileJobId = crypto.randomUUID();
-    const result = await downloadResolvedTrack({
-      id: fileJobId,
-      target,
-      format: job.format,
-      probe,
-      skipAnalysis: true,
-      onProgress: (p) => {
-        child.progress = p;
-      },
-    });
-
-    // Register a minimal entry so GET /api/file/:id can serve this child's
-    // file without any changes to that route.
-    jobs.set(fileJobId, {
-      id: fileJobId,
-      file: result.file,
-      ext: result.ext,
-      title: child.title,
-      artist: child.artist,
-      createdAt: Date.now(),
-    });
-
-    child.fileJobId = fileJobId;
-    child.ext = result.ext;
-    child.progress = 100;
-    child.status = 'done';
-    console.log(
-      `[job ${job.id}] track ${child.index + 1}/${job.trackCount} "${child.title}" done ` +
-        `(${(fs.statSync(result.file).size / 1e6).toFixed(1)} MB) ${memLine()}`,
-    );
-  } catch (err) {
-    child.status = 'error';
-    child.error = String(err?.message || err);
-    console.warn(`[job ${job.id}] child ${child.index} (${child.title}) failed: ${child.error} ${memLine()}`);
+  let target;
+  let probe;
+  if (job.source === 'spotify') {
+    target = `ytsearch1:${[child.artist, child.title].filter(Boolean).join(' ')}`;
+    probe = await probeAudio(target);
+  } else {
+    target = `https://www.youtube.com/watch?v=${raw.videoId}`;
+    const combined = await getInfoAndProbe(target);
+    child.title = combined.info.title || child.title;
+    child.artist = combined.info.artist || child.artist;
+    probe = combined.probe;
   }
+
+  child.status = 'downloading';
+  const fileJobId = crypto.randomUUID();
+  const result = await downloadResolvedTrack({
+    id: fileJobId,
+    target,
+    format: job.format,
+    probe,
+    skipAnalysis: true,
+    onProgress: (p) => {
+      child.progress = p;
+    },
+  });
+
+  // Register a minimal entry so GET /api/file/:id can serve this child's
+  // file without any changes to that route.
+  jobs.set(fileJobId, {
+    id: fileJobId,
+    file: result.file,
+    ext: result.ext,
+    title: child.title,
+    artist: child.artist,
+    createdAt: Date.now(),
+  });
+
+  child.fileJobId = fileJobId;
+  child.ext = result.ext;
+  child.progress = 100;
+  child.status = 'done';
+  console.log(
+    `[job ${job.id}] track ${child.index + 1}/${job.trackCount} "${child.title}" done ` +
+      `(${(fs.statSync(result.file).size / 1e6).toFixed(1)} MB) ${memLine()}`,
+  );
 }
 
 /**
